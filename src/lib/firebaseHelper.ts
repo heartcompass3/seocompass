@@ -1,10 +1,11 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, FirebaseApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithPopup, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
-  User 
+  User,
+  Auth
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -16,7 +17,8 @@ import {
   query, 
   where, 
   serverTimestamp, 
-  deleteDoc
+  deleteDoc,
+  Firestore
 } from 'firebase/firestore';
 import { GeneratedArticle } from '../types';
 
@@ -36,17 +38,46 @@ const firebaseConfig = {
 
 const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || '(default)';
 
+// IMPORTANT: Firebase initialization MUST NOT be allowed to throw at module
+// load time. `App.tsx` imports from this module, and `main.tsx` renders
+// `<App />` synchronously on page load -- if this module throws while it is
+// being evaluated (e.g. getAuth() throwing "auth/invalid-api-key" because the
+// VITE_FIREBASE_* env vars are missing or wrong), the ENTIRE app fails to
+// render and the user sees a blank white page with no on-screen indication of
+// what went wrong. Instead, we catch any initialization error, log it clearly,
+// and export `auth`/`db` as `null`. Every function below that needs `auth` or
+// `db` checks for `null` first and fails gracefully (e.g. by throwing a
+// catchable error only when the user actually tries to sign in / sync), so
+// the rest of the app keeps working even if Firebase is misconfigured.
+let appInstance: FirebaseApp | null = null;
+let dbInstance: Firestore | null = null;
+let authInstance: Auth | null = null;
+
 if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
   console.error(
     'Firebase configuration is missing. Set VITE_FIREBASE_* environment variables ' +
-    '(see .env.example) in your .env.local file and in your Vercel project settings.'
+    '(see .env.example) in your .env.local file and in your Vercel project settings. ' +
+    'Sign-in and Google Drive / Firestore sync will be unavailable until this is fixed.'
   );
+} else {
+  try {
+    appInstance = initializeApp(firebaseConfig);
+    dbInstance = getFirestore(appInstance, firestoreDatabaseId);
+    authInstance = getAuth(appInstance);
+  } catch (error) {
+    console.error(
+      'Failed to initialize Firebase. Sign-in and Google Drive / Firestore sync will be ' +
+      'unavailable. Double-check the VITE_FIREBASE_* environment variables.',
+      error
+    );
+    appInstance = null;
+    dbInstance = null;
+    authInstance = null;
+  }
 }
 
-// Initialize Firebase SDK
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firestoreDatabaseId); /* CRITICAL */
-export const auth = getAuth(app);
+export const db = dbInstance;
+export const auth = authInstance;
 
 // Google Sign-In Provider and Drive scope configuration
 export const provider = new GoogleAuthProvider();
@@ -82,9 +113,9 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
     },
     operationType,
     path
@@ -95,6 +126,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 // Connection test on boot as required by the validation constraints
 export async function testFirestoreConnection() {
+  if (!db) {
+    console.error("Skipping Firestore connection test: Firebase is not configured.");
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -109,6 +144,14 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  if (!auth) {
+    // Firebase isn't configured -- treat as "signed out" so the app still
+    // renders and the UI can prompt the user to sign in (which will then
+    // surface a clear error) instead of staying stuck or blank.
+    if (onAuthFailure) onAuthFailure();
+    return () => {};
+  }
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (cachedAccessToken) {
@@ -126,6 +169,12 @@ export const initAuth = (
 
 // Sign in with premium google auth popup and retrieve Google Access Token for Drive API calls
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+  if (!auth) {
+    throw new Error(
+      'Firebase is not configured for this deployment (missing VITE_FIREBASE_* environment variables), ' +
+      'so Google Sign-In is unavailable.'
+    );
+  }
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
@@ -151,7 +200,9 @@ export const getAccessToken = async (): Promise<string | null> => {
 
 // Logout and clear token cache
 export const logout = async () => {
-  await auth.signOut();
+  if (auth) {
+    await auth.signOut();
+  }
   cachedAccessToken = null;
 };
 
@@ -346,6 +397,10 @@ export async function saveArticleToFirestore(
   userId: string
 ): Promise<void> {
   const articlePath = `articles/${article.id}`;
+  if (!db) {
+    handleFirestoreError(new Error('Firebase is not configured for this deployment.'), OperationType.WRITE, articlePath);
+    return;
+  }
   try {
     const docRef = doc(db, 'articles', article.id);
     
@@ -377,6 +432,10 @@ export async function saveArticleToFirestore(
  */
 export async function loadArticlesFromFirestore(userId: string): Promise<GeneratedArticle[]> {
   const collectionPath = 'articles';
+  if (!db) {
+    handleFirestoreError(new Error('Firebase is not configured for this deployment.'), OperationType.LIST, collectionPath);
+    return [];
+  }
   try {
     const articlesCol = collection(db, collectionPath);
     // Security enforcer query - must match auth.uid in where clause
@@ -416,6 +475,10 @@ export async function loadArticlesFromFirestore(userId: string): Promise<Generat
  */
 export async function deleteArticleFromFirestore(articleId: string): Promise<void> {
   const docPath = `articles/${articleId}`;
+  if (!db) {
+    handleFirestoreError(new Error('Firebase is not configured for this deployment.'), OperationType.DELETE, docPath);
+    return;
+  }
   try {
     const docRef = doc(db, 'articles', articleId);
     await deleteDoc(docRef);
