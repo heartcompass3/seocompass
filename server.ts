@@ -1,8 +1,12 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+// NOTE: `vite` is a devDependency and must NOT be imported at the top level.
+// On Vercel, api/index.ts imports this module, and a static `import ... from
+// "vite"` would be evaluated at function load and crash the serverless
+// function ("A server error has occurred"). It is imported dynamically inside
+// startServer() below, which only runs in local dev (never on Vercel).
 
 dotenv.config();
 
@@ -566,6 +570,7 @@ app.post("/api/seo/serp", async (req, res) => {
 // Serve static assets / handle Vite middleware
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
