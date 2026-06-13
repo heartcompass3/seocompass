@@ -77,6 +77,42 @@ function parseJSONResponse(text: string) {
   }
 }
 
+// Fetch live Google Israel SERP results via SerpApi (https://serpapi.com).
+// Returns null when no SERPAPI_KEY is configured so callers can fall back to
+// a Gemini-only flow. Throws on an actual API/network error.
+async function fetchSerpResults(query: string) {
+  const apiKey = process.env.SERPAPI_KEY;
+  if (!apiKey || !query) return null;
+
+  const params = new URLSearchParams({
+    engine: "google",
+    q: query,
+    google_domain: "google.co.il",
+    gl: "il",
+    hl: "he",
+    num: "10",
+    api_key: apiKey,
+  });
+
+  const resp = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
+  if (!resp.ok) {
+    throw new Error(`בקשת SerpApi נכשלה (קוד ${resp.status})`);
+  }
+  const data: any = await resp.json();
+
+  const organic = (data.organic_results || []).map((r: any) => {
+    let domain = r.displayed_link || "";
+    try {
+      domain = new URL(r.link).hostname.replace(/^www\./, "");
+    } catch { /* keep displayed_link fallback */ }
+    return { position: r.position, title: r.title, link: r.link, domain, snippet: r.snippet || "" };
+  });
+  const relatedQuestions = (data.related_questions || []).map((q: any) => q.question).filter(Boolean);
+  const relatedSearches = (data.related_searches || []).map((s: any) => s.query).filter(Boolean);
+
+  return { organic, relatedQuestions, relatedSearches };
+}
+
 // 1. Competitor Analysis Router
 app.post("/api/seo/analyze-competitors", async (req, res) => {
   try {
@@ -86,10 +122,32 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
     }
 
     const client = getAIClient();
-    
+
+    // Ground the analysis in real Google IL ranking data when SerpApi is set.
+    let serpGrounding = "";
+    try {
+      const serpQuery = topic || targetUrl;
+      const serp = await fetchSerpResults(serpQuery);
+      if (serp && serp.organic.length) {
+        const top = serp.organic
+          .slice(0, 10)
+          .map((r: any) => `#${r.position} ${r.domain} — ${r.title}`)
+          .join("\n");
+        serpGrounding = `\n\nנתוני SERP אמיתיים מגוגל ישראל (SerpApi) עבור "${serpQuery}". בסס את הניתוח על המתחרים האמיתיים שמדורגים בפועל, לא על השערות:\nתוצאות אורגניות מובילות:\n${top}\n`;
+        if (serp.relatedQuestions.length) {
+          serpGrounding += `\nשאלות שאנשים שואלים (PAA): ${serp.relatedQuestions.join(" | ")}\n`;
+        }
+        if (serp.relatedSearches.length) {
+          serpGrounding += `חיפושים קשורים: ${serp.relatedSearches.join(" | ")}\n`;
+        }
+      }
+    } catch (serpErr) {
+      console.warn("SERP grounding failed, continuing with Gemini-only analysis:", serpErr);
+    }
+
     const prompt = `בצע ניתוח מתחרים מעמיק ומקצועי עבור אתר האינטרנט או הנושא הבאים:
 כתובת האתר: ${targetUrl || "לא צוין אתר ספציפי"}
-הנושא/הנישה: ${topic || "ניתוח כללי של האתר"}
+הנושא/הנישה: ${topic || "ניתוח כללי של האתר"}${serpGrounding}
 
 עליך לבצע מחקר אינטרנטי עדכני באמצעות כלי החיפוש של גוגל כדי למצוא את 3 המתחרים האורגניים המובילים של האתר או הנושא הזה בגוגל ישראל, ולאסוף נתונים מדויקים ככל הניתן של נתחי שוק, מילות מפתח מובילות, סמכות דומיין מוערכת (Domain Authority), פרופיל קישורים חיצוניים, בעיות On-page SEO נפוצות ואסטרטגיית התוכן שלהם.
 
@@ -195,58 +253,70 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 // 3. SEO Article Generator Router
 app.post("/api/seo/generate-article", async (req, res) => {
   try {
-    const { keyword, audience, tone, additionalKeywords, guidelines, useSearch } = req.body;
+    const { keyword, audience, tone, additionalKeywords, guidelines, useSearch, selectedModel } = req.body;
     if (!keyword) {
       return res.status(400).json({ error: "חובה לספק מילת מפתח ראשית לייצור המאמר" });
     }
 
     const client = getAIClient();
+    const modelName = selectedModel || "gemini-3.5-flash";
 
     let searchGuidance = "";
     if (useSearch) {
       searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך לבצע שאילתות בגוגל על הנושא '${keyword}' ועל הטרנדים ומילות המפתח האחרונות נכון לשנת 2026 כדי להפיק טקסט מדויק, רלוונטי, ומלא בעובדות ודוגמאות אמיתיות מהמציאות הנוכחית בארץ.`;
     }
 
-    const prompt = `כתוב מאמר מקיף, מרתק, מעמיק ומותאם לחלוטין לקידום אורגני בגוגל (SEO Friendly), סביב מילת המפתח הראשית הבאה:
+    const prompt = `כתוב מאמר עומק לאתר "מצפן הלב" של יוסי מדלסי, סביב מילת המפתח הראשית הבאה:
 מילת מפתח ראשית: ${keyword}
-קהל יעד: ${audience || "קהל כללי המתעניין בתחום"}
-סגנון כתיבה (Tone): ${tone || "Professional and informative"}
+קהל יעד: ${audience || "הורים למתבגרים, נוער, וזוגות"}
+סגנון כתיבה (Tone): ${tone || "סמכותי וחברי בו זמנית, אדם שעבר"}
 מילות מפתח נוספות לשילוב: ${additionalKeywords || "ללא מילות מפתח נוספות"}
-הנחיות מיוחדות מהלקוח: ${guidelines || "אין משהו מיוחד, כתוב מאמר מצוין"}${searchGuidance}
+הנחיות מיוחדות מהלקוח: ${guidelines || "אין משהו מיוחד"}${searchGuidance}
 
-המאמר חייב לכלול:
-1. כותרת מושכת קליקים ומותאמת SEO (עם מילת המפתח בתוכה)
-2. כותרת מטא (SEO Title) פנימית באורך של עד 60 תווים
-3. תיאור מטא (Meta Description) מניע לפעולה באורך של עד 155 תווים כולל מילת המפתח הראשית.
-4. סלאג מומלץ (URL Slug) באנגלית (למשל seo-optimized-article-on-keyword).
-5. ראשי פרקים מפורטים (ראשי תיבות של H2 ו-H3).
-6. תוכן מאמר מלא (באורך 500-1000 מילים) כתוב בפורמט Markdown מלא כולל פסקאות, כותרות H1, H2, H3, רשימות (bullets), והדגשות (bold) למילים החשובות.
-7. חלק של שאלות נפוצות (FAQ) קצר עם תשובות רשמיות לשיפור הסיכוי להופיע ב-Featured Snippets של גוגל.
-8. טיפים משלימים לקידום הדף הספציפי הזה בגוגל.
+חוקי הקול של מצפן הלב (מחייבים, אי-עמידה בהם פוסלת את המאמר):
+1. כללי פסילה מוחלטים: אסור מקפים ארוכים (—) בשום צורה. אסור סימני פיסוק מוגזמים. אסור דימויים מנופחים. אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
+2. קודם הסיפור, רק אחר כך השכבה הסמנטית. פותחים בכניסה דרך הצד, סצנה אחת חיה וספציפית, לא ישר לנושא ולא בתזה מופשטת.
+3. עברית מדוברת, משפטים קצרים שעומדים בפני עצמם. פסקה היא משפט עד שלושה. RTL תמיד.
+4. אוטוריטה (חוקר/מחקר) נכנסת כדי להוכיח נקודה, במשפט אחד מובלע בסיפור, ולא כרשימת מקורות ולא כפתרון.
+5. הסיום הוא שאלת זהות פתוחה שנשארת עם הקורא, לעולם לא CTA קר ולא "צור קשר" ולא הבטחת תוצאה.
+6. לפחות משפט הגדרה עצמאי אחד, חד, שמנוע AI יכול לחלץ כתשובה שלמה לשאלת החיפוש (זה שדה aiCitation).
+
+מבנה ארבעת מרכיבי ה-SEO (הקפד על ההבחנה ביניהם):
+- title: שאלת חיפוש נפוצה, מה שאדם באמת מקליד בגוגל או ב-ChatGPT. לא כותרת ספרותית.
+- goldLine: תת-כותרת קצרה ומסקרנת שמתארת את המנגנון. משפט אחד חד ופרובוקטיבי, לקורא האנושי (לא ל-meta).
+- excerpt: תקציר ענייני של שניים עד שלושה משפטים תיאוריים, פונה למנוע, יושב ב-meta description ובכרטיס באתר.
+- urlSlug: מילות מפתח באנגלית מופרדות במקפים (למשל why-we-attract-unavailable-partners).
 
 החזר את כל הנתונים במבנה JSON הבא בדיוק (אל תפרט הערות נוספות מחוץ ל-JSON):
 {
   "id": "מזהה ייחודי קצר שאתה מייצר",
   "keyword": "${keyword}",
-  "title": "כותרת המאמר המרכזית (H1)",
-  "metaTitle": "SEO Title מוערך",
-  "metaDescription": "Meta Description מוערך ומאתגר",
-  "urlSlug": "excellent-slug-example",
-  "wordCount": 850, // מספר המילים המדויק במאמר שייצרת בפועל
+  "title": "כותרת בנוסח שאלת חיפוש (H1)",
+  "goldLine": "תת-כותרת המנגנון, משפט אחד חד",
+  "metaTitle": "כותרת SEO עד 60 תווים",
+  "metaDescription": "תיאור מטא עד 155 תווים, זהה או נגזר מה-excerpt",
+  "excerpt": "תקציר ענייני של 2-3 משפטים להדבקה בשדה excerpt ב-Sanity",
+  "urlSlug": "english-keywords-with-hyphens",
+  "authorLine": "שורת סמכות קצרה על הכותב (שדה authorLine ב-Sanity)",
+  "imageAlt": "תיאור alt קצר ומדויק לתמונה הראשית, כולל מילת המפתח באופן טבעי",
+  "tags": ["בחר ערך אחד או שניים אך ורק מתוך הרשימה הסגורה: זוגיות, הורות, נוער, קריירה, התפתחות אישית"],
+  "aiCitation": "משפט הגדרה עצמאי אחד וחד שעונה על שאלת החיפוש במלואה ללא הקשר נוסף",
+  "wordCount": 850,
   "outline": [
-    { "sectionTitle": "פרק 1: שם הפרק", "description": "תמצית קצרה על מה מדובר בפרק" }
+    { "sectionTitle": "כותרת ביניים שהיא מנגנון ולא קישוט", "description": "תמצית קצרה" }
   ],
-  "content": "המאמר המלא בפורמט Markdown כולל כותרות H2, H3, פסקאות, הדגשות, וזרימה טבעית בעברית...",
+  "content": "גוף המאמר המלא בפורמט Markdown (כותרות ##, פסקאות, הדגשות). זה לתצוגה ולעריכה.",
+  "bodyHtml": "אותו גוף מאמר בדיוק כ-HTML עם dir=\\"rtl\\" בכל בלוק (<p dir=\\"rtl\\">, <h2 dir=\\"rtl\\">, <blockquote dir=\\"rtl\\">). בלי תגיות <html>/<head>/<body>, רק תוכן הגוף, מוכן להדבקה לעורך Portable Text של Sanity. בלי מקפים ארוכים.",
   "faqs": [
-    { "question": "שאלה נפוצה ראשונה?", "answer": "תשובה קצרה ומדויקת" }
+    { "question": "שאלה נפוצה אמיתית?", "answer": "תשובה קצרה ומדויקת" }
   ],
-  "seoTips": ["טיפ ראשון לקדם את המאמר בגוגל", "טיפ שני לקישורים פנימיים"]
+  "seoTips": ["טיפ לקידום הדף", "טיפ לקישור פנימי (לבדוק שהוא קיים באתר לפני שימוש)"]
 }
 
-יש לכתוב את כל התכנים בעברית רהוטה ונקייה במיוחד, מוכנה לפרסום בבלוגים או אתרי חדשות גדולים. מובטח שתשלב את מילת המפתח הראשית בפסקה הראשונה וכמה פעמים נוספות במאמר באופן טבעי (בלי ספאמינג).`;
+חובה: tags אך ורק מהרשימה הסגורה (זוגיות / הורות / נוער / קריירה / התפתחות אישית). content ו-bodyHtml חייבים להיות אותו מאמר בדיוק, רק בפורמט שונה. כתוב בעברית רהוטה ונקייה בקול של יוסי.`;
 
     const config: any = {
-      systemInstruction: "You are an award-winning Hebrew copywriter and master SEO Content Architect. You generate articles that human readers love to read and Google loves to rank.",
+      systemInstruction: "You are Yossi Medalsi's content architect for the Hebrew brand 'מצפן הלב' (HeartCompass). You write emotionally precise Hebrew articles in his voice: story first, semantic SEO layer second. You strictly avoid em-dashes, formulaic openings, and cold CTAs. Every article maps cleanly onto the Sanity 'article' schema fields.",
       responseMimeType: "application/json"
     };
 
@@ -255,7 +325,7 @@ app.post("/api/seo/generate-article", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: modelName,
       contents: prompt,
       config: config
     });
@@ -304,19 +374,27 @@ ${article.content}
 עליך לבצע את העריכה המבוקשת בצורה מדויקת, עקבית ומקצועית במיוחד, תוך שמירה על הנהלים הבאים:
 1. בצע את השינוי בתוכן המאמר, אך עדכן גם את תגיות המטא (metaTitle, metaDescription), הסלאג (urlSlug) והכותרת (title) אם הדבר מתבקש או ראוי לאלגוריתם הקידום.
 2. שמור על פורמט Markdown מלא, תקין ואסתטי.
-3. החזר אך ורק מבנה JSON תואם לחלוטין (אל תפרט הערות נוספות מחוץ ל-JSON):
+3. שמור על חוקי הקול של מצפן הלב: בלי מקפים ארוכים, בלי פתיחות נוסחתיות, בלי CTA קר. שמור על כל השדות של סכימת Sanity ועדכן אותם אם השינוי מצריך.
+4. החזר אך ורק מבנה JSON תואם לחלוטין (אל תפרט הערות נוספות מחוץ ל-JSON):
 {
   "id": "${article.id || "art_" + Date.now()}",
   "keyword": "${article.keyword}",
   "title": "הכותרת המעודכנת (או המקורית)",
+  "goldLine": "תת-כותרת המנגנון המעודכנת (או המקורית)",
   "metaTitle": "SEO Title מעודכן",
   "metaDescription": "Meta Description מעודכן",
+  "excerpt": "תקציר ענייני מעודכן (2-3 משפטים)",
   "urlSlug": "excellent-slug-example",
-  "wordCount": 850, // אומדן מילים חדש
+  "authorLine": "שורת סמכות (או המקורית)",
+  "imageAlt": "תיאור alt לתמונה הראשית",
+  "tags": ["מתוך הרשימה הסגורה בלבד: זוגיות, הורות, נוער, קריירה, התפתחות אישית"],
+  "aiCitation": "משפט הגדרה עצמאי שמנוע AI יכול לחלץ",
+  "wordCount": 850,
   "outline": [
     { "sectionTitle": "שם הפרק", "description": "תמצית קצרה" }
   ],
   "content": "התוכן המלא המעודכן בפורמט Markdown...",
+  "bodyHtml": "אותו תוכן מעודכן כ-HTML עם dir=\\"rtl\\" בכל בלוק, מוכן להדבקה ל-Sanity",
   "faqs": [
     { "question": "שאלה נפוצה", "answer": "תשובה קצרה" }
   ],
@@ -453,6 +531,35 @@ app.post("/api/seo/chat-expert", async (req, res) => {
   } catch (error: any) {
     console.error("Error in chat-expert:", error);
     res.status(500).json({ error: error.message || "שגיאה בצ'אט המומחה" });
+  }
+});
+
+// Integration status — lets the UI show which manual connections are wired,
+// so the user controls exactly what is connected. Based purely on whether the
+// relevant env keys are present; no external calls are made here.
+app.get("/api/seo/status", (_req, res) => {
+  res.json({
+    gemini: Boolean(process.env.GEMINI_API_KEY),
+    serpapi: Boolean(process.env.SERPAPI_KEY),
+    searchConsole: Boolean(process.env.VITE_GSC_SITE_URL),
+  });
+});
+
+// 7. Live SERP lookup (SerpApi) — raw Google Israel results for a query
+app.post("/api/seo/serp", async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) {
+      return res.status(400).json({ error: "חובה לספק שאילתת חיפוש" });
+    }
+    if (!process.env.SERPAPI_KEY) {
+      return res.status(400).json({ error: "מפתח SerpApi (SERPAPI_KEY) חסר בהגדרות השרת. הוסף אותו ל-.env.local ול-Vercel." });
+    }
+    const serp = await fetchSerpResults(query);
+    res.json({ serp });
+  } catch (error: any) {
+    console.error("Error in serp:", error);
+    res.status(500).json({ error: error.message || "שגיאה בשליפת תוצאות SERP" });
   }
 });
 

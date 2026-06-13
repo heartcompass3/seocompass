@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validate GeneratedArticle
+    function isValidGeneratedArticle(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.keyword is string && data.keyword.size() <= 256
+        && data.title is string && data.title.size() <= 512
+        && data.content is string && data.content.size() <= 100000
+        && data.userId is string && data.userId == request.auth.uid;
+    }
+
+    match /articles/{articleId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(articleId) 
+        && isValidGeneratedArticle(incoming())
+        && incoming().createdAt == request.time;
+        
+      allow update: if isSignedIn() 
+        && isValidId(articleId) 
+        && existing().userId == request.auth.uid
+        && isValidGeneratedArticle(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt;
+        
+      allow delete: if isSignedIn() 
+        && existing().userId == request.auth.uid;
+    }
+  }
+}

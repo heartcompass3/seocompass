@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GeneratedArticle } from '../types';
 import { User } from 'firebase/auth';
-import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X } from 'lucide-react';
+import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X, Copy, ClipboardCheck } from 'lucide-react';
 
 interface ArticleSectionProps {
   selectedKeyword: string;
@@ -25,6 +25,62 @@ interface AuditResult {
   checklist: Array<{ factor: string; passed: boolean }>;
 }
 
+// A single copy-to-clipboard field, mapped 1:1 to a Sanity `article` field name.
+function CopyField({
+  label,
+  sanityField,
+  value,
+  mono,
+  multiline,
+}: {
+  label: string;
+  sanityField: string;
+  value?: string;
+  mono?: boolean;
+  multiline?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error('Clipboard copy failed:', err);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-3 text-right">
+      <div className="flex items-center justify-between gap-2 mb-1.5 flex-row-reverse">
+        <div className="flex items-center gap-1.5 flex-row-reverse">
+          <span className="text-xs font-bold text-slate-700">{label}</span>
+          <span className="text-[9px] font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded" dir="ltr">{sanityField}</span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg transition-all cursor-pointer ${
+            copied ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+          }`}
+        >
+          {copied ? <ClipboardCheck className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          <span>{copied ? 'הועתק' : 'העתק'}</span>
+        </button>
+      </div>
+      <div
+        dir="rtl"
+        className={`whitespace-pre-wrap break-words text-slate-700 ${
+          mono ? 'font-mono text-[11px] bg-slate-50 rounded-lg p-2 max-h-48 overflow-auto' : multiline ? 'text-xs leading-relaxed' : 'text-xs font-semibold'
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export default function ArticleSection({
   selectedKeyword,
   onGenerateArticle,
@@ -43,6 +99,7 @@ export default function ArticleSection({
   const [additionalKeywords, setAdditionalKeywords] = useState('');
   const [guidelines, setGuidelines] = useState('');
   const [useSearch, setUseSearch] = useState(false);
+  const [genModel, setGenModel] = useState('gemini-3.5-flash');
 
   const [savingToFirestore, setSavingToFirestore] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -85,7 +142,8 @@ export default function ArticleSection({
       tone,
       additionalKeywords,
       guidelines,
-      useSearch
+      useSearch,
+      selectedModel: genModel
     });
   };
 
@@ -248,6 +306,23 @@ export default function ArticleSection({
                   <option value="Selling and persuasive">שיווקי, משכנע ומניע לרכישה</option>
                   <option value="Creative and storytelling">יצירתי ומספר סיפור</option>
                 </select>
+              </div>
+
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold text-slate-700 mb-1.5">מודל Gemini ליצירה</label>
+                <select
+                  value={genModel}
+                  onChange={(e) => setGenModel(e.target.value)}
+                  className="w-full text-right bg-slate-50 hover:bg-slate-100/50 focus:bg-white text-slate-800 text-sm px-3 py-2 rounded-xl border border-slate-200 focus:border-blue-500 outline-none transition-all"
+                  id="article-gen-model"
+                >
+                  <option value="gemini-3.5-flash">gemini-3.5-flash (מהיר וכללי)</option>
+                  <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (עומק ומבנה מורכב)</option>
+                  <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (מהיר וחסכוני)</option>
+                </select>
+                {genModel === 'gemini-3.1-pro-preview' && (
+                  <span className="text-[10px] text-amber-600 mt-1">מודל מתקדם — ודא שמפתחות החיוב מופעלים בחשבון.</span>
+                )}
               </div>
 
               <div className="flex flex-col">
@@ -471,6 +546,35 @@ export default function ArticleSection({
                   </div>
                 </div>
               )}
+
+              {/* Sanity-ready fields panel — each field maps 1:1 to the Sanity `article` schema */}
+              <div className="bg-white rounded-2xl border border-emerald-200/80 p-5 shadow-xs space-y-3 text-right">
+                <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3 flex-row-reverse justify-end">
+                  <FileCode className="w-4.5 h-4.5 text-emerald-600" />
+                  <div>
+                    <h4 className="font-display font-bold text-slate-800 text-sm">שדות מוכנים להדבקה ב-Sanity (מסמך "מאמר")</h4>
+                    <p className="text-[10px] text-slate-400">כל שדה ממופה לשם השדה ב-Sanity. העתק והדבק ידנית.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <CopyField label="כותרת ראשית" sanityField="title" value={generatedArticle.title} />
+                  <CopyField label="שורת מסגור (זהב)" sanityField="goldLine" value={generatedArticle.goldLine} />
+                  <CopyField label="Slug" sanityField="slug.current" value={generatedArticle.urlSlug} mono />
+                  <CopyField label="תחומים" sanityField="tags" value={generatedArticle.tags?.join(', ')} />
+                  <CopyField label="תקציר ענייני" sanityField="excerpt" value={generatedArticle.excerpt} multiline />
+                  <CopyField label="שורת סמכות" sanityField="authorLine" value={generatedArticle.authorLine} />
+                  <CopyField label="Alt לתמונה ראשית" sanityField="mainImage.alt" value={generatedArticle.imageAlt} multiline />
+                  <CopyField label="משפט ציטוט למנוע (AEO)" sanityField="—" value={generatedArticle.aiCitation} multiline />
+                </div>
+
+                <CopyField label="גוף המאמר (HTML להדבקה)" sanityField="body" value={generatedArticle.bodyHtml} mono multiline />
+
+                <p className="text-[10px] text-slate-400 leading-relaxed bg-slate-50 rounded-lg p-2.5">
+                  שדות שנשארים לך למלא ידנית ב-Sanity: תמונה ראשית (<span dir="ltr" className="font-mono">mainImage</span>), מחבר (<span dir="ltr" className="font-mono">author</span>), תאריך פרסום (<span dir="ltr" className="font-mono">publishedAt</span>).
+                  את גוף ה-HTML הדבק לתוך עורך התוכן של Sanity, והוא יומר אוטומטית ל-Portable Text.
+                </p>
+              </div>
 
               {/* 🔮 AI & SEO Control Console Panel */}
               <div className="bg-gradient-to-br from-indigo-900 via-slate-900 to-blue-950 text-white rounded-2xl p-6 shadow-md border border-indigo-500/20 space-y-5 text-right">

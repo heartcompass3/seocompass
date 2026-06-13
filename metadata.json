@@ -1,0 +1,6 @@
+{
+  "name": "SEO Competitor and Article Suite",
+  "description": "An advanced research and article writing platform providing Google search grounding competitor mapping, keyword volume analysis, and direct Google Drive Docs export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

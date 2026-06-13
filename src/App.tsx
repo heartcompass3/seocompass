@@ -197,6 +197,9 @@ const INITIAL_KEYWORDS: KeywordResearchResult[] = [
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'competitors' | 'keywords' | 'generator' | 'chat'>('competitors');
+
+  // Manual integration connection status (which slots are wired)
+  const [integrations, setIntegrations] = useState<{ gemini: boolean; serpapi: boolean; searchConsole: boolean } | null>(null);
   
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -217,6 +220,14 @@ export default function App() {
   const [articleLoading, setArticleLoading] = useState(false);
 
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Load which manual connection slots are wired (Gemini / SerpApi / Search Console)
+  useEffect(() => {
+    fetch('/api/seo/status')
+      .then((r) => r.json())
+      .then(setIntegrations)
+      .catch(() => setIntegrations(null));
+  }, []);
 
   // Sync auth on load
   useEffect(() => {
@@ -456,11 +467,25 @@ export default function App() {
             </div>
           </div>
 
-          {/* Quick info status line */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-50 border border-slate-200/60 rounded-full text-[10px] text-slate-500 font-mono">
-            <span>MODELS: gemini-3.5-flash</span>
-            <span className="text-slate-300">•</span>
-            <span>GROUNDING: ENABLED</span>
+          {/* Live integration connection status — each is a manual slot you control */}
+          <div className="hidden md:flex items-center gap-1.5" title="סטטוס חיבורים ידניים">
+            {[
+              { key: 'gemini', label: 'Gemini', on: integrations?.gemini },
+              { key: 'serpapi', label: 'SerpApi', on: integrations?.serpapi },
+              { key: 'searchConsole', label: 'Search Console', on: integrations?.searchConsole },
+            ].map((i) => (
+              <span
+                key={i.key}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                  i.on
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-slate-50 text-slate-400 border-slate-200'
+                }`}
+              >
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${i.on ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                {i.label}
+              </span>
+            ))}
           </div>
         </div>
       </header>

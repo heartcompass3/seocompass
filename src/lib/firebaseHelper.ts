@@ -83,6 +83,14 @@ export const auth = authInstance;
 export const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 
+// --- Manual connection slot: Google Search Console (read-only) ---
+// Dormant by design. To activate the connection:
+//   1. In Google Cloud Console (same project as Firebase), enable
+//      "Google Search Console API".
+//   2. Add the scope below to your OAuth consent screen.
+//   3. Uncomment the next line and set VITE_GSC_SITE_URL in .env.local.
+// provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
+
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
 // Cache the access token in memory.
@@ -485,4 +493,46 @@ export async function deleteArticleFromFirestore(articleId: string): Promise<voi
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, docPath);
   }
+}
+
+/**
+ * Manual connection slot: fetches Google Search Console performance data
+ * (real impressions/clicks/position for your verified site).
+ *
+ * Dormant until you activate the connection (see the commented scope near the
+ * top of this file) and set VITE_GSC_SITE_URL (e.g. "sc-domain:heartcompass.vercel.app").
+ * Reuses the same Google access token obtained during sign-in.
+ */
+export async function fetchSearchConsoleData(
+  accessToken: string,
+  opts?: { startDate?: string; endDate?: string; rowLimit?: number }
+): Promise<any[]> {
+  const siteUrl = import.meta.env.VITE_GSC_SITE_URL;
+  if (!siteUrl) {
+    throw new Error('חיבור Search Console לא הופעל: הגדר את VITE_GSC_SITE_URL ב-.env.local.');
+  }
+
+  const endDate = opts?.endDate || new Date().toISOString().slice(0, 10);
+  const startDate = opts?.startDate || new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 10);
+
+  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      startDate,
+      endDate,
+      dimensions: ['query', 'page'],
+      rowLimit: opts?.rowLimit || 25,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Search Console request failed: ${await res.text()}`);
+  }
+  const data = await res.json();
+  return data.rows || [];
 }

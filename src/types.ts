@@ -35,6 +35,18 @@ export interface KeywordResearchResult {
   suggestedAction: string;
 }
 
+// Closed list of allowed tags ("תחומים") as defined in the Sanity `article` schema.
+// The article generator MUST pick from this list only.
+export const SANITY_ARTICLE_TAGS = [
+  'זוגיות',
+  'הורות',
+  'נוער',
+  'קריירה',
+  'התפתחות אישית',
+] as const;
+
+export type SanityArticleTag = typeof SANITY_ARTICLE_TAGS[number];
+
 export interface GeneratedArticle {
   id: string;
   keyword: string;
@@ -53,6 +65,18 @@ export interface GeneratedArticle {
     answer: string;
   }[];
   seoTips: string[];
+
+  // --- Fields aligned with the Sanity `article` document schema ---
+  // These are produced so each Sanity field can be copied manually 1:1.
+  // Optional so older articles loaded from Drive/Firestore still type-check.
+  goldLine?: string;    // Sanity: goldLine  — שורת מסגור (זהב) / תת-כותרת המנגנון
+  excerpt?: string;     // Sanity: excerpt   — תקציר ענייני (יושב ב-meta description ובכרטיס)
+  tags?: SanityArticleTag[]; // Sanity: tags  — תחומים, מהרשימה הסגורה בלבד
+  authorLine?: string;  // Sanity: authorLine — שורת סמכות
+  imageAlt?: string;    // Sanity: mainImage.alt — טקסט חלופי לתמונה הראשית
+  aiCitation?: string;  // משפט הגדרה עצמאי שמנוע AI יכול לחלץ (GEO/AEO)
+  bodyHtml?: string;    // גוף המאמר כ-HTML RTL מוכן להדבקה לעורך של Sanity
+
   savedDriveFileId?: string;
   savedDriveFileUrl?: string;
 }
