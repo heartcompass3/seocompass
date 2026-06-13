@@ -2,11 +2,11 @@ import express from "express";
 import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
-// NOTE: `vite` is a devDependency and must NOT be imported at the top level.
-// On Vercel, api/index.ts imports this module, and a static `import ... from
-// "vite"` would be evaluated at function load and crash the serverless
-// function ("A server error has occurred"). It is imported dynamically inside
-// startServer() below, which only runs in local dev (never on Vercel).
+// NOTE: `vite` is a devDependency and must NEVER appear in this module's graph.
+// On Vercel, api/index.ts imports this file as a serverless function; any
+// reference to "vite" (even a dynamic import) gets bundled by @vercel/node and
+// crashes the function at load ("A server error has occurred"). The Vite dev
+// server therefore lives entirely in a separate file, dev-server.ts.
 
 dotenv.config();
 
@@ -567,35 +567,24 @@ app.post("/api/seo/serp", async (req, res) => {
   }
 });
 
-// Serve static assets / handle Vite middleware
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
+// Local standalone server (NOT Vercel, NOT the Vite dev server). Serves the
+// pre-built client from dist/ and listens. This is what `npm start` runs on a
+// traditional Node host.
+//
+// - On Vercel: process.env.VERCEL is set, so this block is skipped; the Express
+//   `app` is exported below and invoked per-request as a serverless function.
+// - Under `npm run dev`: dev-server.ts sets DEV_SERVER before importing this
+//   module and attaches the Vite middleware itself, so we must NOT also listen
+//   here (that would double-bind the port).
+if (!process.env.VERCEL && !process.env.DEV_SERVER) {
+  const distPath = path.join(process.cwd(), "dist");
+  app.use(express.static(distPath));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
-}
-
-// On Vercel the Express app is exported (see api/index.ts) and invoked as a
-// serverless function per-request -- it must NOT call app.listen() or try to
-// serve dist/ itself (Vercel serves the static build output directly via
-// "outputDirectory" in vercel.json). Everywhere else (local dev, "npm start"
-// on a traditional Node host) we boot a normal long-running HTTP server.
-if (!process.env.VERCEL) {
-  startServer();
 }
 
 export default app;
