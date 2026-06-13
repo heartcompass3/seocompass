@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -477,4 +477,13 @@ async function startServer() {
   });
 }
 
-startServer();
+// On Vercel the Express app is exported (see api/index.ts) and invoked as a
+// serverless function per-request -- it must NOT call app.listen() or try to
+// serve dist/ itself (Vercel serves the static build output directly via
+// "outputDirectory" in vercel.json). Everywhere else (local dev, "npm start"
+// on a traditional Node host) we boot a normal long-running HTTP server.
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

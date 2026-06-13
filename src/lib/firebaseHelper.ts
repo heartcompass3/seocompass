@@ -19,11 +19,33 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { GeneratedArticle } from '../types';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+// Firebase configuration is read from Vite environment variables (set in
+// .env.local for development and in the Vercel project settings for
+// production/preview deployments). This avoids committing project
+// credentials to the repository and lets each environment point at its own
+// Firebase project. See .env.example for the required variable names.
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || '(default)';
+
+if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+  console.error(
+    'Firebase configuration is missing. Set VITE_FIREBASE_* environment variables ' +
+    '(see .env.example) in your .env.local file and in your Vercel project settings.'
+  );
+}
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId); /* CRITICAL */
+export const db = getFirestore(app, firestoreDatabaseId); /* CRITICAL */
 export const auth = getAuth(app);
 
 // Google Sign-In Provider and Drive scope configuration
