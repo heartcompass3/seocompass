@@ -165,6 +165,9 @@ function buildJsonLd(article: GeneratedArticle): string {
   return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }, null, 2);
 }
 
+// Base URL for internal article links on the live site.
+const ARTICLE_BASE_URL = 'https://heartcompass.vercel.app/articles/';
+
 // Trigger a client-side file download (no server / API involved).
 function downloadFile(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -364,6 +367,22 @@ export default function ArticleSection({
     } finally {
       setLinksLoading(false);
     }
+  };
+
+  // Weave the real Sanity links into the article body via the AI editor,
+  // following the brand link rule (1-2 word anchors, embedded in sentence flow).
+  const handleInsertInternalLinks = async () => {
+    if (!generatedArticle || linkSuggestions.length === 0) return;
+    const list = linkSuggestions
+      .map((l) => `- "${l.title}" ← ${ARTICLE_BASE_URL}${l.slug.trim()}`)
+      .join('\n');
+    const prompt = `שלב במאמר קישורים פנימיים למאמרים הקיימים הבאים. חוקים מחייבים: כל קישור על מילה אחת או שתיים רלוונטיות בלבד, מוטמע בתוך זרימת המשפט, לעולם לא כרשימה בסוף ולא על משפט שלם מודגש. שלב לפחות 3 מהם (או את כולם אם יש פחות), רק היכן שזה טבעי ומשרת את הקורא, בלי לשנות את שאר התוכן, הקול והמבנה.
+
+המאמרים לקישור (כותרת ← כתובת):
+${list}
+
+החזר את המאמר המלא עם הקישורים משולבים, גם ב-content (Markdown בפורמט [עוגן](כתובת)) וגם ב-bodyHtml (HTML בפורמט <a href="כתובת">עוגן</a>).`;
+    await handleEditArticle(prompt);
   };
 
   const handleSaveToFirestoreLocal = async () => {
@@ -771,9 +790,18 @@ export default function ArticleSection({
                       {linkSuggestions.map((l, i) => (
                         <div key={i} className="flex items-center justify-between gap-2 bg-slate-50 rounded-lg px-3 py-2 text-xs flex-row-reverse">
                           <span className="font-semibold text-slate-700 truncate">{l.title}</span>
-                          <span className="font-mono text-[10px] text-blue-600 shrink-0" dir="ltr">/{l.slug}</span>
+                          <span className="font-mono text-[10px] text-blue-600 shrink-0" dir="ltr">/{l.slug.trim()}</span>
                         </div>
                       ))}
+                      <button
+                        onClick={handleInsertInternalLinks}
+                        disabled={editingLoading}
+                        title="עורך ה-AI ישלב את הקישורים בגוף המאמר, על מילה-שתיים, מוטמעים בזרימה"
+                        className="w-full mt-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {editingLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                        <span>שלב את הקישורים בגוף המאמר</span>
+                      </button>
                     </div>
                   )}
                 </div>
