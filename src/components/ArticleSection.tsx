@@ -147,8 +147,13 @@ export default function ArticleSection({
     });
   };
 
-  const handleEditArticle = async () => {
-    if (!generatedArticle || !editPrompt.trim()) return;
+  // promptOverride lets the analyzer feed its recommendations straight into the
+  // rewriter. typeof guard because React passes the click event when this is
+  // used directly as an onClick handler.
+  const handleEditArticle = async (promptOverride?: string) => {
+    const override = typeof promptOverride === 'string' ? promptOverride : undefined;
+    const effectivePrompt = (override ?? editPrompt).trim();
+    if (!generatedArticle || !effectivePrompt) return;
     setEditingLoading(true);
     setEditError('');
     setEditSuccess(false);
@@ -159,7 +164,7 @@ export default function ArticleSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           article: generatedArticle,
-          editPrompt,
+          editPrompt: effectivePrompt,
           selectedModel,
           useSearch: useSearchForEdit
         })
@@ -217,6 +222,24 @@ export default function ArticleSection({
     } finally {
       setAuditLoading(false);
     }
+  };
+
+  // Feed the analyzer's recommendations straight into the AI rewriter.
+  const handleApplyRecommendations = async () => {
+    if (!auditResult) return;
+    const recs = auditResult.recommendations || [];
+    const failed = (auditResult.checklist || []).filter(c => !c.passed).map(c => c.factor);
+    if (recs.length === 0 && failed.length === 0) return;
+
+    let prompt = 'שפר את המאמר כך שיעמוד בהמלצות ה-SEO הבאות, תוך שמירה על הקול, המבנה ומילת המפתח:\n';
+    recs.forEach((r, i) => { prompt += `${i + 1}. ${r}\n`; });
+    if (failed.length) {
+      prompt += `\nבנוסף, תקן את הגורמים שנכשלו בבדיקה: ${failed.join('; ')}.`;
+    }
+
+    setEditPrompt(prompt);
+    setActiveSubConsole('editor');
+    await handleEditArticle(prompt);
   };
 
   const handleSaveToFirestoreLocal = async () => {
@@ -802,6 +825,19 @@ export default function ArticleSection({
                         </div>
 
                         <div className="flex justify-end gap-2">
+                          <button
+                            onClick={handleApplyRecommendations}
+                            disabled={editingLoading}
+                            title="שולח את ההמלצות לעורך ה-AI ומשכתב את המאמר לפיהן"
+                            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer border border-indigo-400/30"
+                          >
+                            {editingLoading ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Wand2 className="w-3 h-3" />
+                            )}
+                            <span>שכתב את המאמר לפי ההמלצות</span>
+                          </button>
                           <button
                             onClick={handleAnalyzeContent}
                             className="bg-white/10 hover:bg-white/20 text-white text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
