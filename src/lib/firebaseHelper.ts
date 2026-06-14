@@ -88,8 +88,10 @@ provider.addScope('https://www.googleapis.com/auth/drive.file');
 //   1. In Google Cloud Console (same project as Firebase), enable
 //      "Google Search Console API".
 //   2. Add the scope below to your OAuth consent screen.
-//   3. Uncomment the next line and set VITE_GSC_SITE_URL in .env.local.
-// provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
+//   3. Set VITE_GSC_SITE_URL in .env.local / Vercel.
+// The scope is requested on sign-in; if the user hasn't granted it yet, the
+// Search Console tab prompts them to reconnect.
+provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;

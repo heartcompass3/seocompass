@@ -20,6 +20,7 @@ import CompetitorSection from './components/CompetitorSection';
 import KeywordSection from './components/KeywordSection';
 import ArticleSection from './components/ArticleSection';
 import ExpertChatSection from './components/ExpertChatSection';
+import SearchConsoleSection from './components/SearchConsoleSection';
 
 // Icons
 import { 
@@ -30,7 +31,8 @@ import {
   Sparkles, 
   Flame, 
   Network,
-  Cpu
+  Cpu,
+  Search
 } from 'lucide-react';
 
 // Prepopulated high-quality initial data on Israel Parenting Guidance & Youth Emotional Coaching niche
@@ -196,7 +198,7 @@ const INITIAL_KEYWORDS: KeywordResearchResult[] = [
 
 export default function App() {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'competitors' | 'keywords' | 'generator' | 'chat'>('competitors');
+  const [activeTab, setActiveTab] = useState<'competitors' | 'keywords' | 'generator' | 'chat' | 'searchconsole'>('competitors');
 
   // Manual integration connection status (which slots are wired)
   const [integrations, setIntegrations] = useState<{ gemini: boolean; serpapi: boolean; searchConsole: boolean } | null>(null);
@@ -598,6 +600,19 @@ export default function App() {
               <Network className="w-4 h-4" />
               <span>חדר ייעוץ אסטרטג SEO</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('searchconsole')}
+              id="tab-searchconsole"
+              className={`pb-3.5 px-4 text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'searchconsole'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Search className="w-4 h-4" />
+              <span>Search Console</span>
+            </button>
           </div>
         </div>
 
@@ -636,8 +651,16 @@ export default function App() {
           )}
 
           {activeTab === 'chat' && (
-            <ExpertChatSection 
+            <ExpertChatSection
               onSendMessage={handleSendMessageToExpert}
+            />
+          )}
+
+          {activeTab === 'searchconsole' && (
+            <SearchConsoleSection
+              googleToken={googleToken}
+              configured={Boolean(integrations?.searchConsole)}
+              onConnect={handleLogin}
             />
           )}
         </div>
