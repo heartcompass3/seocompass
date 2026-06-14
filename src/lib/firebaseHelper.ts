@@ -95,8 +95,21 @@ provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
-// Cache the access token in memory.
-let cachedAccessToken: string | null = null;
+// Cache the Google access token. Persisted to sessionStorage so a page refresh
+// within the token's lifetime keeps Drive working -- the OAuth access token is
+// otherwise only available at sign-in time and is lost on reload, which made
+// the app show "connected" while saves failed with "sign in first".
+const TOKEN_KEY = 'gsc_google_access_token';
+let cachedAccessToken: string | null =
+  typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(TOKEN_KEY) : null;
+
+function setCachedToken(token: string | null) {
+  cachedAccessToken = token;
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch { /* sessionStorage unavailable */ }
+}
 
 // Firestore error utility mapping as defined by strict skill requirements
 export enum OperationType {
@@ -193,8 +206,8 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('Failed to get access token from Firebase Auth');
     }
 
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    setCachedToken(credential.accessToken);
+    return { user: result.user, accessToken: credential.accessToken };
   } catch (error: any) {
     console.error('Google Sign-In failed:', error);
     throw error;
@@ -213,7 +226,7 @@ export const logout = async () => {
   if (auth) {
     await auth.signOut();
   }
-  cachedAccessToken = null;
+  setCachedToken(null);
 };
 
 /**

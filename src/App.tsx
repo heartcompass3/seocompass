@@ -296,9 +296,23 @@ export default function App() {
   };
 
   const handleSaveToDriveLocal = async (article: GeneratedArticle) => {
-    if (!googleToken) throw new Error("יש להתחבר ל-Google Drive תחילה כדי לשמור מאמרים");
-    const saved = await saveArticleToDrive(article, googleToken);
-    const updated = await loadArticlesFromDrive(googleToken);
+    // The Google access token can be lost (e.g. after a page refresh) even while
+    // the Firebase user session persists, which made saving fail while the UI
+    // still showed "connected". If that happens, transparently re-acquire a
+    // fresh token via a sign-in popup instead of just failing.
+    let token = googleToken;
+    if (!token) {
+      const result = await googleSignIn();
+      if (result) {
+        token = result.accessToken;
+        setUser(result.user);
+        setGoogleToken(result.accessToken);
+        setNeedsAuth(false);
+      }
+    }
+    if (!token) throw new Error("יש להתחבר ל-Google Drive תחילה כדי לשמור מאמרים");
+    const saved = await saveArticleToDrive(article, token);
+    const updated = await loadArticlesFromDrive(token);
     setSavedArticles(updated);
     return saved;
   };
