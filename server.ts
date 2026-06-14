@@ -571,6 +571,47 @@ app.post("/api/seo/serp", async (req, res) => {
   }
 });
 
+// 8. Internal link suggestions from the Sanity CMS. Uses the public dataset
+// read API (no token), so it surfaces only REAL existing articles/slugs — which
+// is exactly the brand rule: never invent internal links.
+app.post("/api/seo/internal-links", async (req, res) => {
+  try {
+    const { keyword, tags } = req.body;
+    const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+    const dataset = process.env.VITE_SANITY_DATASET || "production";
+    const groq = '*[_type=="article" && defined(slug.current)]{title,"slug":slug.current,tags,excerpt}';
+    const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(groq)}`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`שאילתת Sanity נכשלה (קוד ${resp.status})`);
+    }
+    const data: any = await resp.json();
+    const articles: any[] = data.result || [];
+
+    const kwTokens = String(keyword || "").split(/\s+/).filter((t) => t.length > 1);
+    const tagSet = new Set<string>(Array.isArray(tags) ? tags : []);
+
+    const scored = articles
+      .map((a) => {
+        let score = 0;
+        (a.tags || []).forEach((t: string) => { if (tagSet.has(t)) score += 2; });
+        kwTokens.forEach((tok) => {
+          if ((a.title || "").includes(tok) || (a.excerpt || "").includes(tok)) score += 1;
+        });
+        return { title: a.title, slug: a.slug, tags: a.tags || [], score };
+      })
+      .filter((a) => a.score > 0)
+      .sort((x, y) => y.score - x.score)
+      .slice(0, 6);
+
+    res.json({ links: scored, totalArticles: articles.length });
+  } catch (error: any) {
+    console.error("Error in internal-links:", error);
+    res.status(500).json({ error: error.message || "שגיאה בשליפת קישורים פנימיים" });
+  }
+});
+
 // Local standalone server (NOT Vercel, NOT the Vite dev server). Serves the
 // pre-built client from dist/ and listens. This is what `npm start` runs on a
 // traditional Node host.

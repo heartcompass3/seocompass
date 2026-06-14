@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GeneratedArticle } from '../types';
 import { User } from 'firebase/auth';
-import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X, Copy, ClipboardCheck } from 'lucide-react';
+import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X, Copy, ClipboardCheck, Network } from 'lucide-react';
 
 interface ArticleSectionProps {
   selectedKeyword: string;
@@ -143,6 +143,39 @@ function QualityChecks({ article }: { article: GeneratedArticle }) {
   );
 }
 
+// Build Article + FAQPage JSON-LD structured data from the generated article.
+function buildJsonLd(article: GeneratedArticle): string {
+  const graph: any[] = [{
+    '@type': 'Article',
+    headline: article.title,
+    description: article.excerpt || article.metaDescription || '',
+    keywords: article.keyword || '',
+    ...(article.authorLine ? { author: { '@type': 'Person', name: article.authorLine } } : {}),
+  }];
+  if (article.faqs && article.faqs.length) {
+    graph.push({
+      '@type': 'FAQPage',
+      mainEntity: article.faqs.map((f) => ({
+        '@type': 'Question',
+        name: f.question,
+        acceptedAnswer: { '@type': 'Answer', text: f.answer },
+      })),
+    });
+  }
+  return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }, null, 2);
+}
+
+// Trigger a client-side file download (no server / API involved).
+function downloadFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ArticleSection({
   selectedKeyword,
   onGenerateArticle,
@@ -162,6 +195,12 @@ export default function ArticleSection({
   const [guidelines, setGuidelines] = useState('');
   const [useSearch, setUseSearch] = useState(false);
   const [genModel, setGenModel] = useState('gemini-3.5-flash');
+
+  // Internal-link suggestions from Sanity
+  const [linkSuggestions, setLinkSuggestions] = useState<Array<{ title: string; slug: string; tags: string[]; score: number }>>([]);
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linksError, setLinksError] = useState('');
+  const [linksLoaded, setLinksLoaded] = useState(false);
 
   const [savingToFirestore, setSavingToFirestore] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -302,6 +341,29 @@ export default function ArticleSection({
     setEditPrompt(prompt);
     setActiveSubConsole('editor');
     await handleEditArticle(prompt);
+  };
+
+  const handleFetchInternalLinks = async () => {
+    if (!generatedArticle) return;
+    setLinksLoading(true);
+    setLinksError('');
+    setLinksLoaded(false);
+    try {
+      const res = await fetch('/api/seo/internal-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: generatedArticle.keyword, tags: generatedArticle.tags || [] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'שגיאה בשליפת קישורים');
+      setLinkSuggestions(data.links || []);
+      setLinksLoaded(true);
+    } catch (err: any) {
+      console.error(err);
+      setLinksError(err.message || 'שליפת קישורים פנימיים נכשלה.');
+    } finally {
+      setLinksLoading(false);
+    }
   };
 
   const handleSaveToFirestoreLocal = async () => {
@@ -662,6 +724,59 @@ export default function ArticleSection({
                   שדות שנשארים לך למלא ידנית ב-Sanity: תמונה ראשית (<span dir="ltr" className="font-mono">mainImage</span>), מחבר (<span dir="ltr" className="font-mono">author</span>), תאריך פרסום (<span dir="ltr" className="font-mono">publishedAt</span>).
                   את גוף ה-HTML הדבק לתוך עורך התוכן של Sanity, והוא יומר אוטומטית ל-Portable Text.
                 </p>
+              </div>
+
+              {/* Export, JSON-LD schema & internal links */}
+              <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4 text-right">
+                <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3 flex-row-reverse justify-end">
+                  <FileCode className="w-4.5 h-4.5 text-blue-600" />
+                  <h4 className="font-display font-bold text-slate-800 text-sm">ייצוא, סכמה וקישורים פנימיים</h4>
+                </div>
+
+                {/* Export buttons */}
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <button
+                    onClick={() => downloadFile(`${generatedArticle.urlSlug || 'article'}.html`, generatedArticle.bodyHtml || generatedArticle.content, 'text/html;charset=utf-8')}
+                    className="bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> הורד HTML
+                  </button>
+                  <button
+                    onClick={() => downloadFile(`${generatedArticle.urlSlug || 'article'}.md`, generatedArticle.content, 'text/markdown;charset=utf-8')}
+                    className="bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> הורד Markdown
+                  </button>
+                </div>
+
+                {/* JSON-LD */}
+                <CopyField label="JSON-LD Schema (Article + FAQ)" sanityField="<script type=ld+json>" value={buildJsonLd(generatedArticle)} mono multiline />
+
+                {/* Internal links from Sanity */}
+                <div className="space-y-2 border-t border-slate-100 pt-3">
+                  <button
+                    onClick={handleFetchInternalLinks}
+                    disabled={linksLoading}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {linksLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Network className="w-3.5 h-3.5" />}
+                    <span>הצע קישורים פנימיים אמיתיים (מ-Sanity)</span>
+                  </button>
+                  {linksError && <p className="text-xs text-rose-600">{linksError}</p>}
+                  {linksLoaded && linkSuggestions.length === 0 && !linksError && (
+                    <p className="text-xs text-slate-400">לא נמצאו מאמרים קיימים רלוונטיים לקישור.</p>
+                  )}
+                  {linkSuggestions.length > 0 && (
+                    <div className="space-y-1.5">
+                      {linkSuggestions.map((l, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 bg-slate-50 rounded-lg px-3 py-2 text-xs flex-row-reverse">
+                          <span className="font-semibold text-slate-700 truncate">{l.title}</span>
+                          <span className="font-mono text-[10px] text-blue-600 shrink-0" dir="ltr">/{l.slug}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* 🔮 AI & SEO Control Console Panel */}
