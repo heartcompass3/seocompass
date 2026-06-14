@@ -81,6 +81,68 @@ function CopyField({
   );
 }
 
+// Client-side quality checks: HeartCompass brand-voice hard rules + SEO field
+// lengths. Pure logic, no API calls.
+function QualityChecks({ article }: { article: GeneratedArticle }) {
+  const content = article.content || '';
+  const combined = content + ' ' + (article.bodyHtml || '');
+  const emDashes = (combined.match(/[—–]/g) || []).length;
+  const formulaicPhrases = ['רבים מאיתנו', 'כולנו מכירים', 'האם גם אתם', 'בעולם של היום', 'מי מאיתנו לא', 'אין ספק ש'];
+  const foundFormulaic = formulaicPhrases.filter((p) => content.includes(p));
+
+  const metaTitleLen = (article.metaTitle || '').length;
+  const metaDescLen = (article.metaDescription || '').length;
+  const kw = (article.keyword || '').trim();
+  const kwInTitle = !!kw && (article.title || '').includes(kw);
+  const firstPara = content
+    .split('\n')
+    .map((s) => s.trim())
+    .find((s) => s && !s.startsWith('#') && !s.startsWith('*') && !s.startsWith('-'));
+  const kwInFirst = !!kw && !!firstPara && firstPara.includes(kw);
+
+  const lenColor = (len: number, min: number, max: number) =>
+    len === 0 ? 'text-slate-400' : len > max ? 'text-rose-600' : len < min ? 'text-amber-600' : 'text-emerald-600';
+
+  const Row = ({ ok, label, detail }: { ok: boolean; label: string; detail?: string }) => (
+    <div className="flex items-center justify-between gap-2 py-1 flex-row-reverse">
+      <span className="text-xs text-slate-700">
+        {label}
+        {detail ? <span className="text-rose-500"> — {detail}</span> : null}
+      </span>
+      {ok ? <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> : <X className="w-3.5 h-3.5 text-rose-500 shrink-0" />}
+    </div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-3 text-right">
+      <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3 flex-row-reverse justify-end">
+        <Gauge className="w-4.5 h-4.5 text-blue-600" />
+        <h4 className="font-display font-bold text-slate-800 text-sm">בדיקות איכות — קול מותג ו-SEO</h4>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 mb-1">קול מותג (מצפן הלב)</p>
+          <Row ok={emDashes === 0} label="בלי מקפים ארוכים" detail={emDashes ? `נמצאו ${emDashes}` : undefined} />
+          <Row ok={foundFormulaic.length === 0} label="בלי פתיחות נוסחתיות" detail={foundFormulaic.length ? foundFormulaic.join(', ') : undefined} />
+        </div>
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 mb-1">SEO</p>
+          <div className="flex items-center justify-between py-1 flex-row-reverse">
+            <span className="text-xs text-slate-700">אורך כותרת מטא</span>
+            <span className={`text-xs font-mono font-bold ${lenColor(metaTitleLen, 30, 60)}`}>{metaTitleLen}/60</span>
+          </div>
+          <div className="flex items-center justify-between py-1 flex-row-reverse">
+            <span className="text-xs text-slate-700">אורך תיאור מטא</span>
+            <span className={`text-xs font-mono font-bold ${lenColor(metaDescLen, 70, 155)}`}>{metaDescLen}/155</span>
+          </div>
+          <Row ok={kwInTitle} label="מילת המפתח בכותרת" />
+          <Row ok={kwInFirst} label="מילת המפתח בפסקה הראשונה" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ArticleSection({
   selectedKeyword,
   onGenerateArticle,
@@ -569,6 +631,9 @@ export default function ArticleSection({
                   </div>
                 </div>
               )}
+
+              {/* Client-side quality checks — brand voice + SEO lengths */}
+              <QualityChecks article={generatedArticle} />
 
               {/* Sanity-ready fields panel — each field maps 1:1 to the Sanity `article` schema */}
               <div className="bg-white rounded-2xl border border-emerald-200/80 p-5 shadow-xs space-y-3 text-right">

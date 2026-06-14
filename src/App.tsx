@@ -231,6 +231,24 @@ export default function App() {
       .catch(() => setIntegrations(null));
   }, []);
 
+  // Draft recovery: restore the last generated article on load so a page
+  // refresh never loses work, even without Google Drive.
+  useEffect(() => {
+    try {
+      const draft = localStorage.getItem('seocompass_draft');
+      if (draft) setGeneratedArticle(JSON.parse(draft));
+    } catch { /* ignore corrupt/blocked storage */ }
+  }, []);
+
+  // Persist the current article as a local draft whenever it changes.
+  useEffect(() => {
+    try {
+      if (generatedArticle) {
+        localStorage.setItem('seocompass_draft', JSON.stringify(generatedArticle));
+      }
+    } catch { /* ignore quota/blocked storage */ }
+  }, [generatedArticle]);
+
   // Sync auth on load
   useEffect(() => {
     const unsubscribe = initAuth(
