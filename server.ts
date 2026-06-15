@@ -228,11 +228,27 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 
     const client = getAIClient();
 
+    // Real keyword ideas from Google IL via SerpApi (related searches + PAA).
+    // SerpApi does the live search; Gemini only estimates the metrics, so we no
+    // longer need Gemini's grounding (which caused the 429s).
+    let serpKeywords = "";
+    try {
+      const serp = await fetchSerpResults(seedKeyword);
+      if (serp) {
+        const ideas = [...serp.relatedSearches, ...serp.relatedQuestions];
+        if (ideas.length) {
+          serpKeywords = `\n\nרעיונות מילות מפתח אמיתיים מגוגל ישראל (SerpApi) עבור "${seedKeyword}". בסס את הרשימה בעיקר על אלה:\n${ideas.map((k) => `- ${k}`).join("\n")}\n`;
+        }
+      }
+    } catch (serpErr) {
+      console.warn("SERP keyword grounding failed, continuing:", serpErr);
+    }
+
     const prompt = `בצע מחקר מילות מפתח מקיף ועדכני עבור מילת המפתח הבאה או הנושא הבא:
 מילת מפתח / נושא ראשי: ${seedKeyword}
-נושא נלווה: ${topic || "ללא נושא נלווה"}
+נושא נלווה: ${topic || "ללא נושא נלווה"}${serpKeywords}
 
-עליך להשתמש בחיפוש גוגל כדי למצוא את מילות המפתח המניבות, מילות הזנב הארוך (Long-tail) והביטויים הקשורים שהכי כדאי לקדם בגוגל ישראל, כולל חיזוי נפח חיפוש מוערך, רמת תחרות קושי (Difficulty), עלות לקליק מוערכת בדולרים (CPC), כוונת החיפוש הדומיננטית (Intent), מדד יעילות מילת המפתח (KEI - Keyword Effectiveness Index שבו נפח חיפוש חלקי רמת קושי בריבוע), ערך הקידום (SEO Value), רמת רלוונטיות לנושא והמלצה מעשית.
+עליך להציע את מילות המפתח המניבות, מילות הזנב הארוך (Long-tail) והביטויים הקשורים שהכי כדאי לקדם בגוגל ישראל (התבסס על הרעיונות האמיתיים לעיל אם סופקו), כולל חיזוי נפח חיפוש מוערך, רמת תחרות קושי (Difficulty), עלות לקליק מוערכת בדולרים (CPC), כוונת החיפוש הדומיננטית (Intent), מדד יעילות מילת המפתח (KEI - Keyword Effectiveness Index שבו נפח חיפוש חלקי רמת קושי בריבוע), ערך הקידום (SEO Value), רמת רלוונטיות לנושא והמלצה מעשית.
 
 החזר בדיוק רשימה של 8-10 מילות מפתח בפורמט JSON של סרסור (Array of Objects):
 [
@@ -251,14 +267,20 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 
 יש לכתוב את מילות המפתח ברובן בעברית (מלבד ביטויים לועזיים רשמיים), ואת כל שאר השדות בעברית מקצועית וברורה עבור מקדם אתרים מקצועי בארץ.`;
 
+    const kwConfig: any = {
+      systemInstruction: "You are an elite local SEO planner and keyword strategist who turns real Israeli search data into actionable keyword opportunities with estimated metrics.",
+    };
+    // Skip grounding when SerpApi already provided real keyword ideas.
+    if (serpKeywords) {
+      kwConfig.responseMimeType = "application/json";
+    } else {
+      kwConfig.tools = [{ googleSearch: {} }];
+    }
+
     const response = await client.models.generateContent({
       model: "gemini-3.1-flash-lite",
       contents: prompt,
-      config: {
-        systemInstruction: "You are an elite local SEO planner and keyword strategist. You search the live web using Google Search tool to extract true, actionable Israeli market keyword opportunities and search terms.",
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json"
-      }
+      config: kwConfig,
     });
 
     const resultText = response.text || "[]";
