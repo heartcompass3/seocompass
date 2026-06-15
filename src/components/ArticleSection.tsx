@@ -1121,8 +1121,13 @@ ${list}
                         );
                       }
                       
-                      // Bold formatting replacements
+                      // Markdown formatting replacements
                       let innerHTML = trimmed;
+                      // Matches [text](url) -> clickable link (must run before bold)
+                      innerHTML = innerHTML.replace(
+                        /\[([^\]]+)\]\(([^)\s]+)\)/g,
+                        '<a href="$2" target="_blank" rel="noreferrer" class="text-blue-600 underline hover:text-blue-700">$1</a>'
+                      );
                       // Matches **text**
                       innerHTML = innerHTML.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 
