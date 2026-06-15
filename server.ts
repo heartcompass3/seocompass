@@ -187,14 +187,26 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
 
 יש לכתוב את כל השדות הטקסטואליים והתיאורים בעברית רהוטה ומקצועית של אסטרטג SEO בכיר. השתמש בחיפוש גוגל כדי להציע מתחרים אמיתיים ורלוונטיים בארץ!`;
 
+    // When SerpApi already supplied real ranking data, we do NOT need Gemini's
+    // Google Search grounding (which has a tiny, separate free-tier quota and is
+    // the reason competitor analysis kept returning 429). Analyze the real data
+    // with a clean JSON response instead. Grounding is kept only as a fallback
+    // when no SerpApi data is available.
+    const config: any = {
+      systemInstruction: "You are an elite SEO strategist and organic growth specialist with absolute expertise in Google Israel's local search ecosystem and search algorithms.",
+    };
+    if (serpGrounding) {
+      config.responseMimeType = "application/json";
+    } else {
+      config.tools = [{ googleSearch: {} }];
+    }
+
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      // Lightweight model: far higher free-tier limits (RPD 500 vs 20) to avoid
+      // exhausting quota on competitor analysis.
+      model: process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
       contents: prompt,
-      config: {
-        systemInstruction: "You are an elite SEO strategist and organic growth specialist with absolute expertise in Google Israel's local search ecosystem and search algorithms.",
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json"
-      }
+      config,
     });
 
     const resultText = response.text || "[]";
@@ -240,7 +252,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 יש לכתוב את מילות המפתח ברובן בעברית (מלבד ביטויים לועזיים רשמיים), ואת כל שאר השדות בעברית מקצועית וברורה עבור מקדם אתרים מקצועי בארץ.`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         systemInstruction: "You are an elite local SEO planner and keyword strategist. You search the live web using Google Search tool to extract true, actionable Israeli market keyword opportunities and search terms.",
@@ -479,7 +491,7 @@ ${content}
 }`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional SEO content auditor with deep knowledge of search intent, NLP patterns, and semantic search.",
@@ -524,7 +536,7 @@ app.post("/api/seo/chat-expert", async (req, res) => {
     });
 
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: geminiContents,
       config: {
         systemInstruction: `אתה אסטרטג קידום אתרים (SEO) בכיר ביותר, יועץ אלגוריתמים של גוגל ומומחה בינה מלאכותית מוערך. 
