@@ -449,7 +449,7 @@ export default function App() {
   };
 
   // 4. Expert Chat Fetch coordinator
-  const handleSendMessageToExpert = async (message: string, history: any[]) => {
+  const handleSendMessageToExpert = async (message: string, history: any[], useSearch: boolean = false) => {
     try {
       const formattedHistory = history.map(msg => ({
         role: msg.role,
@@ -459,7 +459,7 @@ export default function App() {
       const response = await fetch('/api/seo/chat-expert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, chatHistory: formattedHistory }),
+        body: JSON.stringify({ message, chatHistory: formattedHistory, useSearch }),
       });
 
       const data = await response.json();

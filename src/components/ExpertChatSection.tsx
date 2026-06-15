@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User as UserIcon, Bot, Cpu, HelpCircle, GraduationCap } from 'lucide-react';
+import { Send, User as UserIcon, Bot, Cpu, HelpCircle, GraduationCap, Globe } from 'lucide-react';
 
 interface ChatMessage {
   id: string;
@@ -8,7 +8,7 @@ interface ChatMessage {
 }
 
 interface ExpertChatSectionProps {
-  onSendMessage: (message: string, history: ChatMessage[]) => Promise<string | null>;
+  onSendMessage: (message: string, history: ChatMessage[], useSearch: boolean) => Promise<string | null>;
 }
 
 export default function ExpertChatSection({ onSendMessage }: ExpertChatSectionProps) {
@@ -21,6 +21,9 @@ export default function ExpertChatSection({ onSendMessage }: ExpertChatSectionPr
   ]);
   const [inputValue, setInputValue] = useState('');
   const [sending, setSending] = useState(false);
+  // Live Google Search grounding. Off by default to save quota (grounding has a
+  // tiny separate free-tier quota); turn on only for questions needing fresh data.
+  const [useSearch, setUseSearch] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Suggestions for quick entry
@@ -52,7 +55,7 @@ export default function ExpertChatSection({ onSendMessage }: ExpertChatSectionPr
 
     try {
       // Trigger API endpoint
-      const responseText = await onSendMessage(text, messages);
+      const responseText = await onSendMessage(text, messages, useSearch);
       
       const botMsg: ChatMessage = {
         id: Math.random().toString(),
@@ -112,9 +115,9 @@ export default function ExpertChatSection({ onSendMessage }: ExpertChatSectionPr
             </div>
             <div>
               <h4 className="font-display font-semibold text-slate-800 text-sm leading-tight">חדר ייעוץ אסטרטג SEO בכיר</h4>
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 leading-none mt-0.5">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                מחובר ל-Google Search Grounding (חיפוש חי)
+              <span className={`text-[10px] font-semibold flex items-center gap-1 leading-none mt-0.5 ${useSearch ? 'text-emerald-600' : 'text-slate-400'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${useSearch ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`}></span>
+                {useSearch ? 'חיפוש גוגל חי פעיל' : 'מצב חסכוני (בלי חיפוש חי)'}
               </span>
             </div>
           </div>
@@ -170,8 +173,20 @@ export default function ExpertChatSection({ onSendMessage }: ExpertChatSectionPr
 
         {/* Input box */}
         <div className="p-3 border-t border-slate-150/80 bg-slate-50/30">
-          <form 
-            onSubmit={(e) => { e.preventDefault(); handleSend(inputValue); }} 
+          <label className="flex items-center gap-2 justify-end cursor-pointer select-none mb-2 text-[11px] text-slate-500">
+            <span className="flex items-center gap-1">
+              <Globe className="w-3.5 h-3.5" />
+              חיפוש גוגל חי (צורך מכסה, רק לשאלות על מידע עדכני)
+            </span>
+            <input
+              type="checkbox"
+              checked={useSearch}
+              onChange={(e) => setUseSearch(e.target.checked)}
+              className="w-3.5 h-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+            />
+          </label>
+          <form
+            onSubmit={(e) => { e.preventDefault(); handleSend(inputValue); }}
             className="flex items-center gap-2"
           >
             <input

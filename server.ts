@@ -533,7 +533,7 @@ ${content}
 // 4. SEO Expert Chat Router with Google Search Grounding for live algorithms check!
 app.post("/api/seo/chat-expert", async (req, res) => {
   try {
-    const { chatHistory, message } = req.body;
+    const { chatHistory, message, useSearch } = req.body;
     if (!message) {
       return res.status(400).json({ error: "חובה לספק הודעה" });
     }
@@ -557,16 +557,22 @@ app.post("/api/seo/chat-expert", async (req, res) => {
       parts: [{ text: message }]
     });
 
+    const chatConfig: any = {
+      systemInstruction: `אתה אסטרטג קידום אתרים (SEO) בכיר ביותר, יועץ אלגוריתמים של גוגל ומומחה בינה מלאכותית מוערך.
+תפקידך לענות לשאלת המשתמש בעברית ובצורה מקצועית, מפורטת ומגובה בדוגמאות מעשיות.
+התשובות שלך צריכות להיות באופי של יועץ פרטי לחברה שמשלמת אלפי דולרים על ייעוץ. הייה ישיר, אנליטי, וספק משימות/שלבים ברורים לביצוע (checklist) בכל תשובה.`,
+    };
+    // Live Google Search grounding only when the user explicitly enables it
+    // (it consumes the small separate grounding quota). Otherwise answer from
+    // the model's own knowledge -- cheaper and avoids 429s.
+    if (useSearch) {
+      chatConfig.tools = [{ googleSearch: {} }];
+    }
+
     const response = await client.models.generateContent({
       model: "gemini-3.1-flash-lite",
       contents: geminiContents,
-      config: {
-        systemInstruction: `אתה אסטרטג קידום אתרים (SEO) בכיר ביותר, יועץ אלגוריתמים של גוגל ומומחה בינה מלאכותית מוערך. 
-תפקידך לענות לשאלת המשתמש בעברית ובצורה מקצועית, מפורטת ומגובה בדוגמאות מעשיות. 
-חובה עליך להשתמש בכלי החיפוש של גוגל (Google Search) בכל פעם שהמשתמש שואל לגבי חברות אמיתיות, מתחרים, עדכוני אלגוריתמים אחרונים של גוגל (כמו עדכוני Core Updates מ-2024, 2025 ו-2026), מגמות נוכחיות של SEO, או שינויים טכניים.
-התשובות שלך צריכות להיות באופי של יועץ פרטי לחברה שמשלמת אלפי דולרים על ייעוץ. הייה ישיר, אנליטי, וספק משימות/שלבים ברורים לביצוע (checklist) בכל תשובה.`,
-        tools: [{ googleSearch: {} }]
-      }
+      config: chatConfig,
     });
 
     res.json({ text: response.text });
