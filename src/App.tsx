@@ -21,6 +21,7 @@ import KeywordSection from './components/KeywordSection';
 import ArticleSection from './components/ArticleSection';
 import ExpertChatSection from './components/ExpertChatSection';
 import SearchConsoleSection from './components/SearchConsoleSection';
+import SocialSuite from './components/SocialSuite';
 
 // Icons
 import { 
@@ -32,7 +33,8 @@ import {
   Flame, 
   Network,
   Cpu,
-  Search
+  Search,
+  Share2
 } from 'lucide-react';
 
 // Prepopulated high-quality initial data on Israel Parenting Guidance & Youth Emotional Coaching niche
@@ -199,6 +201,9 @@ const INITIAL_KEYWORDS: KeywordResearchResult[] = [
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'competitors' | 'keywords' | 'generator' | 'chat' | 'searchconsole'>('competitors');
+
+  // Top-level suite switch: SEO suite vs Social suite
+  const [suite, setSuite] = useState<'seo' | 'social'>('seo');
 
   // Manual integration connection status (which slots are wired)
   const [integrations, setIntegrations] = useState<{ gemini: boolean; serpapi: boolean; searchConsole: boolean } | null>(null);
@@ -578,6 +583,29 @@ export default function App() {
           onLogout={handleLogout}
         />
 
+        {/* Suite mode switch: SEO suite vs Social suite */}
+        <div className="flex justify-center">
+          <div className="inline-flex bg-slate-100 rounded-2xl p-1 gap-1">
+            <button
+              onClick={() => setSuite('seo')}
+              className={`px-5 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                suite === 'seo' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Search className="w-4 h-4" /> סוויטת SEO
+            </button>
+            <button
+              onClick={() => setSuite('social')}
+              className={`px-5 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                suite === 'social' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Share2 className="w-4 h-4" /> סוויטת סושיאל
+            </button>
+          </div>
+        </div>
+
+        {suite === 'seo' && (<>
         {/* Main Navigation tabs */}
         <div className="border-b border-slate-200">
           <div className="flex space-x-2 space-x-reverse overflow-x-auto pb-px" id="navigation-tabs">
@@ -696,6 +724,9 @@ export default function App() {
             />
           )}
         </div>
+        </>)}
+
+        {suite === 'social' && <SocialSuite />}
       </main>
 
       {/* Styled system Footer block */}

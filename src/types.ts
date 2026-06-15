@@ -90,3 +90,78 @@ export interface SEORecommendation {
   difficulty: 'High' | 'Medium' | 'Low';
   actionSteps: string[];
 }
+
+// =======================
+// Social suite types
+// =======================
+
+export type SocialPlatform = 'instagram' | 'facebook';
+
+// Lightweight article reference used to populate the post-generator picker.
+export interface SocialArticleRef {
+  title: string;
+  slug: string;
+  excerpt?: string;
+  tags?: string[];
+}
+
+export interface SocialPost {
+  platform: SocialPlatform;
+  hookVariations: string[]; // 2-3 opening-line options for A/B
+  caption: string;          // full caption in brand voice
+  hashtags: string[];
+  cta: string;
+  visualIdea: string;       // suggested image/visual direction
+}
+
+export interface CarouselSlide {
+  slideTitle: string;
+  slideText: string;
+}
+
+export interface GeneratedSocialPosts {
+  sourceTitle: string;
+  sourceUrl?: string;
+  posts: SocialPost[];        // one per requested platform
+  carousel: CarouselSlide[];  // optional IG carousel outline (may be empty)
+}
+
+// --- Hashtag & topic research ---
+export interface HashtagItem {
+  tag: string;
+  size: 'broad' | 'niche' | 'branded';
+  estReach: string; // e.g. "1M+ posts" / "אלפי פוסטים"
+}
+
+export interface ContentAngle {
+  angle: string;
+  hook: string;
+}
+
+export interface SocialResearch {
+  topic: string;
+  platform: SocialPlatform;
+  hashtags: HashtagItem[];
+  angles: ContentAngle[];
+  bestTimes: string[];      // suggested posting windows
+  contentPillars: string[]; // recurring content themes
+}
+
+// --- Competitor social analysis (estimated via AI) ---
+export interface SocialCompetitor {
+  name: string;
+  handle: string;
+  platform: string;          // "אינסטגרם" / "פייסבוק" / "טיקטוק"
+  estFollowers: string;
+  contentStyle: string;
+  postingFrequency: string;
+  strengths: string[];
+  gaps: string[];            // opportunities for you
+  winningFormats: string[];  // formats that perform for them
+}
+
+// --- Social strategy chat ---
+export interface SocialChatMessage {
+  role: 'user' | 'model';
+  message: string;
+}

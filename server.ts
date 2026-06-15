@@ -652,6 +652,258 @@ app.post("/api/seo/internal-links", async (req, res) => {
   }
 });
 
+// =======================
+// SOCIAL SUITE ROUTES
+// =======================
+
+// S1. List published articles from Sanity (public dataset) to feed the
+// post-generator picker. Same source the SEO internal-links route uses.
+app.get("/api/social/articles", async (_req, res) => {
+  try {
+    const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+    const dataset = process.env.VITE_SANITY_DATASET || "production";
+    const groq =
+      '*[_type=="article" && defined(slug.current)]|order(coalesce(publishedAt,_createdAt) desc){title,"slug":slug.current,excerpt,tags}';
+    const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(groq)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`שאילתת Sanity נכשלה (קוד ${resp.status})`);
+    const data: any = await resp.json();
+    res.json({ articles: data.result || [] });
+  } catch (error: any) {
+    console.error("Error in social/articles:", error);
+    res.status(500).json({ error: error.message || "שגיאה בשליפת המאמרים" });
+  }
+});
+
+// S2. Generate FB/IG posts from a Sanity article (by slug) or a free topic.
+app.post("/api/social/generate-posts", async (req, res) => {
+  try {
+    const { slug, topic, customText, platforms, goal } = req.body;
+    const wanted: string[] =
+      Array.isArray(platforms) && platforms.length ? platforms : ["instagram", "facebook"];
+
+    const client = getAIClient();
+
+    // Pull the source material: a real article (via Sanity pt::text) or free text.
+    let sourceTitle = topic || "";
+    let sourceUrl = "";
+    let sourceBody = customText || "";
+
+    if (slug) {
+      const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+      const dataset = process.env.VITE_SANITY_DATASET || "production";
+      const groq = `*[_type=="article" && slug.current==$slug][0]{title,excerpt,"text":pt::text(body)}`;
+      const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(
+        groq
+      )}&$slug=${encodeURIComponent(JSON.stringify(slug))}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`שאילתת Sanity נכשלה (קוד ${resp.status})`);
+      const data: any = await resp.json();
+      const art = data.result;
+      if (!art) return res.status(404).json({ error: "המאמר לא נמצא ב-Sanity" });
+      sourceTitle = art.title || sourceTitle;
+      sourceBody = art.text || art.excerpt || sourceBody;
+      sourceUrl = `https://heartcompass.vercel.app/articles/${slug}`;
+    }
+
+    if (!sourceTitle && !sourceBody) {
+      return res.status(400).json({ error: "חובה לבחור מאמר או להזין נושא/טקסט מקור" });
+    }
+
+    const platformLabel = wanted
+      .map((p) => (p === "instagram" ? "אינסטגרם" : "פייסבוק"))
+      .join(" ו");
+
+    const prompt = `אתה אסטרטג תוכן לרשתות חברתיות של המותג "מצפן הלב" של יוסי מדלסי (אימון רגשי תודעתי לנוער, הורים וזוגות).
+המשימה: להפוך את חומר המקור הבא לפוסטים מנצחים ל${platformLabel}.
+
+כותרת/נושא המקור: ${sourceTitle || "ללא כותרת"}
+${sourceUrl ? `קישור למאמר המלא: ${sourceUrl}` : ""}
+מטרת הפוסט: ${goal || "מודעות ומעורבות (engagement), והנעה עדינה לקריאת המאמר/פנייה"}
+
+חומר המקור:
+${(sourceBody || "").slice(0, 6000)}
+
+חוקי הקול של מצפן הלב (מחייבים):
+1. אסור מקפים ארוכים (—). אסור פתיחות נוסחתיות ("רבים מאיתנו", "האם גם אתם", "כולנו מכירים").
+2. קודם סצנה/רגש ספציפי, לא תזה מופשטת. עברית מדוברת, משפטים קצרים. RTL.
+3. בלי הבטחות תוצאה ובלי CTA קר. הסיום מזמין מחשבה או פנייה רכה.
+4. אינסטגרם: ויזואלי, אישי, האשטגים בסוף. פייסבוק: מעט ארוך יותר, סיפורי, פחות האשטגים.
+
+החזר אך ורק JSON במבנה הבא (בלי טקסט מחוץ ל-JSON):
+{
+  "sourceTitle": "${sourceTitle || ""}",
+  "sourceUrl": "${sourceUrl}",
+  "posts": [
+    {
+      "platform": "instagram",
+      "hookVariations": ["וריאציית פתיח 1", "וריאציית פתיח 2", "וריאציית פתיח 3"],
+      "caption": "הכיתוב המלא בקול של מצפן הלב, עם מעברי שורה טבעיים",
+      "hashtags": ["#האשטג1", "#האשטג2", "#האשטג3"],
+      "cta": "הנעה רכה לפעולה (לא קרה)",
+      "visualIdea": "רעיון ויזואלי קונקרטי לפוסט (תמונה/קרוסלה/וידאו)"
+    }
+  ],
+  "carousel": [
+    { "slideTitle": "כותרת שקופית", "slideText": "טקסט קצר לשקופית" }
+  ]
+}
+
+חובה: צור אובייקט post נפרד לכל פלטפורמה מבוקשת (${wanted.join(", ")}). אם אינסטגרם מבוקש, מלא גם carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
+
+    const response = await client.models.generateContent({
+      model: process.env.SOCIAL_MODEL || "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction:
+          "You are Yossi Medalsi's social media content strategist for the Hebrew brand 'מצפן הלב'. You turn articles into platform-native FB/IG posts in his exact voice: story first, no em-dashes, no formulaic openings, no cold CTAs.",
+        responseMimeType: "application/json",
+      },
+    });
+
+    const resultText = response.text || "{}";
+    const data = parseJSONResponse(resultText);
+    res.json({ result: data });
+  } catch (error: any) {
+    console.error("Error in social/generate-posts:", error);
+    res.status(500).json({ error: error.message || "שגיאה בייצור הפוסטים" });
+  }
+});
+
+// S3. Hashtag & topic research (Gemini estimates; optional SerpApi grounding).
+app.post("/api/social/research-hashtags", async (req, res) => {
+  try {
+    const { topic, platform } = req.body;
+    if (!topic) return res.status(400).json({ error: "חובה לספק נושא למחקר" });
+
+    const client = getAIClient();
+    const platformHe = platform === "facebook" ? "פייסבוק" : "אינסטגרם";
+
+    // Optional real grounding from Google IL related searches/PAA.
+    let grounding = "";
+    try {
+      const serp = await fetchSerpResults(topic);
+      if (serp) {
+        const ideas = [...serp.relatedSearches, ...serp.relatedQuestions];
+        if (ideas.length) grounding = `\nרעיונות אמיתיים מגוגל ישראל (בסס עליהם):\n${ideas.map((k) => `- ${k}`).join("\n")}\n`;
+      }
+    } catch { /* ignore */ }
+
+    const prompt = `אתה אסטרטג תוכן ל${platformHe} בעברית, מומחה למותג "מצפן הלב" (אימון רגשי לנוער, הורים וזוגות).
+בצע מחקר נושא והאשטגים עבור: "${topic}".${grounding}
+
+החזר אך ורק JSON במבנה:
+{
+  "topic": "${topic}",
+  "platform": "${platform === "facebook" ? "facebook" : "instagram"}",
+  "hashtags": [
+    { "tag": "#האשטג", "size": "broad" | "niche" | "branded", "estReach": "הערכת היקף (למשל 'מאות אלפי פוסטים')" }
+  ],
+  "angles": [ { "angle": "זווית תוכן", "hook": "משפט פתיחה מסקרן" } ],
+  "bestTimes": ["חלון פרסום מומלץ עם נימוק קצר"],
+  "contentPillars": ["עמוד תוכן מרכזי 1", "עמוד תוכן 2"]
+}
+
+הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
+
+    const response = await client.models.generateContent({
+      model: process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
+        responseMimeType: "application/json",
+      },
+    });
+
+    const data = parseJSONResponse(response.text || "{}");
+    res.json({ result: data });
+  } catch (error: any) {
+    console.error("Error in social/research-hashtags:", error);
+    res.status(500).json({ error: error.message || "שגיאה במחקר ההאשטגים" });
+  }
+});
+
+// S4. Competitor social analysis (Gemini + Google Search grounding; estimated).
+app.post("/api/social/competitor-social", async (req, res) => {
+  try {
+    const { topic, handle } = req.body;
+    if (!topic) return res.status(400).json({ error: "חובה לספק נושא או נישה" });
+
+    const client = getAIClient();
+
+    const prompt = `בצע ניתוח מתחרים ברשתות חברתיות (אינסטגרם/פייסבוק) בעברית עבור הנישה: "${topic}".
+${handle ? `החשבון שלנו: ${handle}.` : ""}
+המותג שלנו: "מצפן הלב" של יוסי מדלסי, מאמן רגשי לנוער/הורים/זוגות, בקנה מידה של נותן שירות עצמאי.
+
+מצא 3 מתחרים אמיתיים ורלוונטיים **באותו קנה מידה** (מאמנים/מטפלים/יוצרי תוכן עצמאיים בעברית), לא מותגי ענק. לכל מתחרה אמוד נתונים על בסיס חיפוש עדכני.
+
+הערה: הנתונים מוערכים (אין API ציבורי לאנליטיקות אורגניות של אחרים). סמן הערכות כשצריך.
+
+החזר אך ורק JSON של מערך בדיוק 3 ישויות:
+[
+  {
+    "name": "שם המתחרה",
+    "handle": "@handle או שם עמוד",
+    "platform": "אינסטגרם" | "פייסבוק" | "טיקטוק",
+    "estFollowers": "הערכת עוקבים (למשל '12K')",
+    "contentStyle": "סגנון התוכן שלו (משפט)",
+    "postingFrequency": "תדירות פרסום מוערכת",
+    "strengths": ["חוזק 1", "חוזק 2", "חוזק 3"],
+    "gaps": ["פער/הזדמנות עבורנו 1", "הזדמנות 2"],
+    "winningFormats": ["פורמט מנצח 1", "פורמט 2"]
+  }
+]
+כל הטקסט בעברית מקצועית.`;
+
+    const response = await client.models.generateContent({
+      model: process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const data = parseJSONResponse(response.text || "[]");
+    res.json({ competitors: data });
+  } catch (error: any) {
+    console.error("Error in social/competitor-social:", error);
+    res.status(500).json({ error: error.message || "שגיאה בניתוח המתחרים" });
+  }
+});
+
+// S5. Social strategy chat (Gemini; optional live search).
+app.post("/api/social/chat", async (req, res) => {
+  try {
+    const { chatHistory, message, useSearch } = req.body;
+    if (!message) return res.status(400).json({ error: "חובה לספק הודעה" });
+
+    const client = getAIClient();
+    const contents: any[] = [];
+    if (Array.isArray(chatHistory)) {
+      chatHistory.forEach((m: any) => contents.push({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.message || "" }] }));
+    }
+    contents.push({ role: "user", parts: [{ text: message }] });
+
+    const config: any = {
+      systemInstruction: `אתה אסטרטג מדיה חברתית בכיר למותג "מצפן הלב" של יוסי מדלסי (אימון רגשי לנוער, הורים וזוגות).
+ענה בעברית, מקצועי וישיר, עם שלבי ביצוע ברורים (checklist) בכל תשובה. שמור על קול המותג: אנושי, בלי קלישאות, בלי מקפים ארוכים, בלי הבטחות תוצאה.`,
+    };
+    if (useSearch) config.tools = [{ googleSearch: {} }];
+
+    const response = await client.models.generateContent({
+      model: process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+      contents,
+      config,
+    });
+
+    res.json({ text: response.text });
+  } catch (error: any) {
+    console.error("Error in social/chat:", error);
+    res.status(500).json({ error: error.message || "שגיאה בצ'אט" });
+  }
+});
+
 // Local standalone server (NOT Vercel, NOT the Vite dev server). Serves the
 // pre-built client from dist/ and listens. This is what `npm start` runs on a
 // traditional Node host.
