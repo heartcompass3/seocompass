@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { CompetitorAnalysis } from '../types';
-import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2 } from 'lucide-react';
+import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2, Plus } from 'lucide-react';
 
 interface CompetitorSectionProps {
-  onAnalyze: (targetUrl: string, topic: string) => Promise<void>;
+  onAnalyze: (targetUrl: string, topic: string, append?: boolean) => Promise<void>;
   loading: boolean;
   competitors: CompetitorAnalysis[];
 }
@@ -279,6 +279,16 @@ export default function CompetitorSection({ onAnalyze, loading, competitors }: C
                 </div>
               </div>
             ))}
+          </div>
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => onAnalyze(targetUrl, topic, true)}
+              disabled={loading}
+              className="text-sm font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-5 py-2.5 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+            >
+              <Plus className="w-4 h-4" /> מצא עוד מתחרים
+            </button>
           </div>
         </div>
       )}

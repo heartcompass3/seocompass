@@ -362,14 +362,15 @@ export default function App() {
   };
 
   // 1. Competitor Analysis Fetch caller
-  const handleAnalyzeCompetitors = async (targetUrl: string, topic: string) => {
+  const handleAnalyzeCompetitors = async (targetUrl: string, topic: string, append = false) => {
     setCompetitorsLoading(true);
     setNotification(null);
     try {
+      const exclude = append ? competitors.map((c) => c.competitorName) : [];
       const response = await fetch('/api/seo/analyze-competitors', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUrl, topic }),
+        body: JSON.stringify({ targetUrl, topic, exclude }),
       });
       
       const data = await response.json();
@@ -378,8 +379,8 @@ export default function App() {
       }
 
       if (data.competitors && Array.isArray(data.competitors)) {
-        setCompetitors(data.competitors);
-        setNotification({ type: 'success', message: 'ניתוח המתחרים האורגני הושלם בהצלחה באמצעות כלי חיפוש גוגל חי.' });
+        setCompetitors((prev) => (append ? [...prev, ...data.competitors] : data.competitors));
+        setNotification({ type: 'success', message: append ? 'נוספו מתחרים חדשים לרשימה.' : 'ניתוח המתחרים האורגני הושלם בהצלחה באמצעות כלי חיפוש גוגל חי.' });
       } else {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }
@@ -392,14 +393,15 @@ export default function App() {
   };
 
   // 2. Keyword Research Fetch caller
-  const handleSearchKeywords = async (seedKeyword: string, topic: string) => {
+  const handleSearchKeywords = async (seedKeyword: string, topic: string, append = false) => {
     setKeywordsLoading(true);
     setNotification(null);
     try {
+      const exclude = append ? keywords.map((k) => k.keyword) : [];
       const response = await fetch('/api/seo/search-keywords', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedKeyword, topic }),
+        body: JSON.stringify({ seedKeyword, topic, exclude }),
       });
 
       const data = await response.json();
@@ -408,8 +410,8 @@ export default function App() {
       }
 
       if (data.keywords && Array.isArray(data.keywords)) {
-        setKeywords(data.keywords);
-        setNotification({ type: 'success', message: 'מחקר מילות המפתח המותאמות לגוגל הושלם בהרחבה.' });
+        setKeywords((prev) => (append ? [...prev, ...data.keywords] : data.keywords));
+        setNotification({ type: 'success', message: append ? 'נוספו מילות מפתח חדשות לרשימה.' : 'מחקר מילות המפתח המותאמות לגוגל הושלם בהרחבה.' });
       } else {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }

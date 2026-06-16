@@ -153,10 +153,13 @@ async function fetchSerpResults(query: string) {
 // 1. Competitor Analysis Router
 app.post("/api/seo/analyze-competitors", async (req, res) => {
   try {
-    const { targetUrl, topic } = req.body;
+    const { targetUrl, topic, exclude } = req.body;
     if (!targetUrl && !topic) {
       return res.status(400).json({ error: "חובה לספק כתובת אתר או נושא לניתוח" });
     }
+    const excludeNote = Array.isArray(exclude) && exclude.length
+      ? `\n\nאל תחזיר מתחרים שכבר הוצגו (מצא חדשים בלבד): ${exclude.join(", ")}`
+      : "";
 
     const client = getAIClient();
 
@@ -184,7 +187,7 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
 
     const prompt = `בצע ניתוח מתחרים מעמיק ומקצועי עבור אתר האינטרנט או הנושא הבאים:
 כתובת האתר: ${targetUrl || "לא צוין אתר ספציפי"}
-הנושא/הנישה: ${topic || "ניתוח כללי של האתר"}${serpGrounding}
+הנושא/הנישה: ${topic || "ניתוח כללי של האתר"}${serpGrounding}${excludeNote}
 
 עליך לבצע מחקר אינטרנטי עדכני באמצעות כלי החיפוש של גוגל כדי למצוא את 3 המתחרים האורגניים הרלוונטיים של האתר או הנושא הזה בגוגל ישראל, ולאסוף נתונים מדויקים ככל הניתן של נתחי שוק, מילות מפתח מובילות, סמכות דומיין מוערכת (Domain Authority), פרופיל קישורים חיצוניים, בעיות On-page SEO נפוצות ואסטרטגיית התוכן שלהם.
 
@@ -254,10 +257,13 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
 // 2. Keyword Research Router
 app.post("/api/seo/search-keywords", async (req, res) => {
   try {
-    const { seedKeyword, topic } = req.body;
+    const { seedKeyword, topic, exclude } = req.body;
     if (!seedKeyword) {
       return res.status(400).json({ error: "חובה לספק מילת מפתח או נושא ראשי" });
     }
+    const excludeNote = Array.isArray(exclude) && exclude.length
+      ? `\n\nאל תחזיר מילות מפתח שכבר הוצגו (החזר חדשות ושונות בלבד): ${exclude.join(", ")}`
+      : "";
 
     const client = getAIClient();
 
@@ -279,7 +285,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 
     const prompt = `בצע מחקר מילות מפתח מקיף ועדכני עבור מילת המפתח הבאה או הנושא הבא:
 מילת מפתח / נושא ראשי: ${seedKeyword}
-נושא נלווה: ${topic || "ללא נושא נלווה"}${serpKeywords}
+נושא נלווה: ${topic || "ללא נושא נלווה"}${serpKeywords}${excludeNote}
 
 עליך להציע את מילות המפתח המניבות, מילות הזנב הארוך (Long-tail) והביטויים הקשורים שהכי כדאי לקדם בגוגל ישראל (התבסס על הרעיונות האמיתיים לעיל אם סופקו), כולל חיזוי נפח חיפוש מוערך, רמת תחרות קושי (Difficulty), עלות לקליק מוערכת בדולרים (CPC), כוונת החיפוש הדומיננטית (Intent), מדד יעילות מילת המפתח (KEI - Keyword Effectiveness Index שבו נפח חיפוש חלקי רמת קושי בריבוע), ערך הקידום (SEO Value), רמת רלוונטיות לנושא והמלצה מעשית.
 
@@ -743,9 +749,14 @@ app.post("/api/social/generate-posts", async (req, res) => {
       return res.status(400).json({ error: "חובה לבחור מאמר או להזין נושא/טקסט מקור" });
     }
 
-    const platformLabel = wanted
-      .map((p) => (p === "instagram" ? "אינסטגרם" : "פייסבוק"))
-      .join(" ו");
+    const labelMap: Record<string, string> = {
+      instagram: "אינסטגרם",
+      facebook: "פייסבוק",
+      reels: "רילס (וידאו קצר)",
+    };
+    const platformLabel = wanted.map((p) => labelMap[p] || p).join(" ו");
+    const wantsReels = wanted.includes("reels");
+    const captionPlatforms = wanted.filter((p) => p !== "reels");
 
     const prompt = `אתה אסטרטג תוכן לרשתות חברתיות של המותג "מצפן הלב" של יוסי מדלסי (אימון רגשי תודעתי לנוער, הורים וזוגות).
 המשימה: להפוך את חומר המקור הבא לפוסטים מנצחים ל${platformLabel}.
@@ -799,10 +810,20 @@ ${(sourceBody || "").slice(0, 6000)}
   ],
   "carousel": [
     { "slideTitle": "כותרת שקופית", "slideText": "טקסט קצר לשקופית" }
-  ]
+  ],
+  "reels": {
+    "hook": "3 השניות הראשונות, משפט או תמונה שעוצרים גלילה",
+    "beats": [
+      { "timecode": "0-3s", "onScreenText": "טקסט על המסך", "voiceover": "מה אומרים בקול", "visual": "מה רואים בפריים" }
+    ],
+    "caption": "כיתוב נלווה לרילס בקול של יוסי",
+    "hashtags": ["#האשטג"],
+    "audioIdea": "רעיון אודיו או סאונד מתאים",
+    "cta": "הנעה רכה (לא קרה)"
+  }
 }
 
-חובה: צור אובייקט post נפרד לכל פלטפורמה מבוקשת (${wanted.join(", ")}). אם אינסטגרם מבוקש, מלא גם carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
+חובה: צור אובייקט post נפרד לכל פלטפורמת כיתוב מבוקשת (${captionPlatforms.join(", ") || "אין"}). ${wantsReels ? "בנוסף, מלא את האובייקט reels עם סקריפט וידאו מלא (5-7 ביטים עם timecode, טקסט על המסך, voiceover וויזואל)." : "החזר reels כ-null."} אם אינסטגרם מבוקש, מלא carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
 
     const response = await generateWithFallback(client, {
       model: model || process.env.SOCIAL_MODEL || "gemini-3.5-flash",
@@ -826,8 +847,11 @@ ${(sourceBody || "").slice(0, 6000)}
 // S3. Hashtag & topic research (Gemini estimates; optional SerpApi grounding).
 app.post("/api/social/research-hashtags", async (req, res) => {
   try {
-    const { topic, platform, model } = req.body;
+    const { topic, platform, model, exclude } = req.body;
     if (!topic) return res.status(400).json({ error: "חובה לספק נושא למחקר" });
+    const excludeNote = Array.isArray(exclude) && exclude.length
+      ? `\n\nאל תחזיר האשטגים שכבר הוצגו (החזר חדשים בלבד): ${exclude.join(", ")}`
+      : "";
 
     const client = getAIClient();
     const platformHe = platform === "facebook" ? "פייסבוק" : "אינסטגרם";
@@ -843,7 +867,7 @@ app.post("/api/social/research-hashtags", async (req, res) => {
     } catch { /* ignore */ }
 
     const prompt = `אתה אסטרטג תוכן ל${platformHe} בעברית, מומחה למותג "מצפן הלב" (אימון רגשי לנוער, הורים וזוגות).
-בצע מחקר נושא והאשטגים עבור: "${topic}".${grounding}
+בצע מחקר נושא והאשטגים עבור: "${topic}".${grounding}${excludeNote}
 
 החזר אך ורק JSON במבנה:
 {
@@ -879,8 +903,11 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 // S4. Competitor social analysis (Gemini + Google Search grounding; estimated).
 app.post("/api/social/competitor-social", async (req, res) => {
   try {
-    const { topic, handle, model } = req.body;
+    const { topic, handle, model, exclude } = req.body;
     if (!topic) return res.status(400).json({ error: "חובה לספק נושא או נישה" });
+    const excludeNote = Array.isArray(exclude) && exclude.length
+      ? `\n\nאל תחזיר מתחרים שכבר הוצגו (מצא חדשים בלבד): ${exclude.join(", ")}`
+      : "";
 
     const client = getAIClient();
 
@@ -897,7 +924,7 @@ app.post("/api/social/competitor-social", async (req, res) => {
       }
     } catch { /* ignore */ }
 
-    const prompt = `בצע ניתוח מתחרים ברשתות חברתיות (אינסטגרם/פייסבוק) בעברית עבור הנישה: "${topic}".${grounding}
+    const prompt = `בצע ניתוח מתחרים ברשתות חברתיות (אינסטגרם/פייסבוק) בעברית עבור הנישה: "${topic}".${grounding}${excludeNote}
 ${handle ? `החשבון שלנו: ${handle}.` : ""}
 המותג שלנו: "מצפן הלב" של יוסי מדלסי, מאמן רגשי לנוער/הורים/זוגות, בקנה מידה של נותן שירות עצמאי.
 

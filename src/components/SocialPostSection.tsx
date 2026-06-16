@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { GeneratedSocialPosts, SocialArticleRef, SocialPlatform } from '../types';
-import { Instagram, Facebook, Sparkles, Copy, Check, Hash, Image as ImageIcon, LayoutGrid, FileText, Wand2 } from 'lucide-react';
+import { GeneratedSocialPosts, SocialArticleRef } from '../types';
+import { Instagram, Facebook, Sparkles, Copy, Check, Hash, Image as ImageIcon, LayoutGrid, FileText, Wand2, Clapperboard, Music } from 'lucide-react';
 
 interface SocialPostSectionProps {
   articles: SocialArticleRef[];
   loading: boolean;
   result: GeneratedSocialPosts | null;
-  onGenerate: (params: { slug?: string; topic?: string; platforms: SocialPlatform[]; goal?: string }) => Promise<void>;
+  onGenerate: (params: { slug?: string; topic?: string; platforms: string[]; goal?: string }) => Promise<void>;
 }
 
 export default function SocialPostSection({ articles, loading, result, onGenerate }: SocialPostSectionProps) {
@@ -14,10 +14,10 @@ export default function SocialPostSection({ articles, loading, result, onGenerat
   const [slug, setSlug] = useState('');
   const [topic, setTopic] = useState('');
   const [goal, setGoal] = useState('');
-  const [platforms, setPlatforms] = useState<SocialPlatform[]>(['instagram', 'facebook']);
+  const [platforms, setPlatforms] = useState<string[]>(['instagram', 'facebook']);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const togglePlatform = (p: SocialPlatform) =>
+  const togglePlatform = (p: string) =>
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -92,7 +92,7 @@ export default function SocialPostSection({ articles, loading, result, onGenerat
           <div className="flex flex-col text-right">
             <label className="text-xs font-semibold text-slate-700 mb-1.5">פלטפורמות</label>
             <div className="flex gap-2">
-              {([['instagram', 'אינסטגרם', Instagram], ['facebook', 'פייסבוק', Facebook]] as const).map(([key, label, Icon]) => (
+              {([['instagram', 'אינסטגרם', Instagram], ['facebook', 'פייסבוק', Facebook], ['reels', 'רילס', Clapperboard]] as const).map(([key, label, Icon]) => (
                 <button key={key} type="button" onClick={() => togglePlatform(key)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${platforms.includes(key) ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
                   <Icon className="w-4 h-4" />
@@ -236,6 +236,53 @@ export default function SocialPostSection({ articles, loading, result, onGenerat
                     <div className="text-[11px] text-slate-600 leading-relaxed">{s.slideText}</div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Reels script */}
+          {result.reels && (
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
+              <div className="flex items-center gap-2 text-slate-800 font-bold text-sm justify-end">
+                <span>סקריפט רילס</span><Clapperboard className="w-4 h-4 text-pink-500" />
+              </div>
+              <div className="bg-pink-50/50 border border-pink-100 rounded-xl p-3 text-right">
+                <span className="text-[11px] font-bold text-pink-700 block mb-1">הוק (3 שניות ראשונות)</span>
+                <span className="text-sm text-slate-800">{result.reels.hook}</span>
+              </div>
+              {result.reels.beats?.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs border-collapse">
+                    <thead>
+                      <tr className="text-slate-500 border-b border-slate-100">
+                        <th className="p-2">זמן</th><th className="p-2">טקסט על המסך</th><th className="p-2">קריינות</th><th className="p-2">ויזואל</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {result.reels.beats.map((b, bi) => (
+                        <tr key={bi} className="text-slate-700 align-top">
+                          <td className="p-2 font-mono text-slate-500 whitespace-nowrap">{b.timecode}</td>
+                          <td className="p-2 font-semibold">{b.onScreenText}</td>
+                          <td className="p-2">{b.voiceover}</td>
+                          <td className="p-2 text-slate-500">{b.visual}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {result.reels.caption && (
+                <p className="text-sm text-slate-800 whitespace-pre-line bg-slate-50/50 rounded-lg p-3 border border-slate-100 text-right">{result.reels.caption}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2 justify-between text-right">
+                {result.reels.audioIdea && (
+                  <span className="text-xs text-slate-600 flex items-center gap-1.5"><Music className="w-3.5 h-3.5 text-slate-400" />{result.reels.audioIdea}</span>
+                )}
+                {result.reels.hashtags?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 justify-end">
+                    {result.reels.hashtags.map((t, ti) => <span key={ti} className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-md">{t}</span>)}
+                  </div>
+                )}
               </div>
             </div>
           )}

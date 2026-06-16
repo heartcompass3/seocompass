@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { SocialResearch, SocialPlatform } from '../types';
-import { Hash, Search, Sparkles, Clock, Layers, Copy, Check, Instagram, Facebook } from 'lucide-react';
+import { Hash, Search, Sparkles, Clock, Layers, Copy, Check, Instagram, Facebook, Plus } from 'lucide-react';
 
 interface HashtagSectionProps {
   loading: boolean;
   result: SocialResearch | null;
-  onSearch: (topic: string, platform: SocialPlatform) => Promise<void>;
+  onSearch: (topic: string, platform: SocialPlatform, append?: boolean) => Promise<void>;
 }
 
 export default function HashtagSection({ loading, result, onSearch }: HashtagSectionProps) {
@@ -129,6 +129,17 @@ export default function HashtagSection({ loading, result, onSearch }: HashtagSec
                 <ul className="space-y-2 text-right">{result.contentPillars.map((p, i) => <li key={i} className="text-xs text-slate-600 flex items-start gap-2 justify-end"><span>{p}</span><span className="text-blue-400">•</span></li>)}</ul>
               </div>
             )}
+          </div>
+
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => onSearch(topic, platform, true)}
+              disabled={loading}
+              className="text-sm font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-5 py-2.5 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              <Plus className="w-4 h-4" /> מצא עוד האשטגים
+            </button>
           </div>
         </div>
       )}

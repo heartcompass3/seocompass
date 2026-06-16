@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { KeywordResearchResult, SearchIntentType } from '../types';
-import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp } from 'lucide-react';
+import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp, Plus } from 'lucide-react';
 
 interface KeywordSectionProps {
-  onSearch: (seedKeyword: string, topic: string) => Promise<void>;
+  onSearch: (seedKeyword: string, topic: string, append?: boolean) => Promise<void>;
   loading: boolean;
   keywords: KeywordResearchResult[];
   onSelectKeywordForArticle: (keyword: string) => void;
@@ -129,6 +129,7 @@ export default function KeywordSection({ onSearch, loading, keywords, onSelectKe
 
       {/* Keywords Table Results */}
       {!loading && keywords.length > 0 && (
+        <>
         <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-xs">
           {/* Header & Filter Row */}
           <div className="p-5 border-b border-slate-150/80 bg-slate-50/50 flex flex-col sm:flex-row items-center justify-between gap-4 text-right">
@@ -261,6 +262,17 @@ export default function KeywordSection({ onSearch, loading, keywords, onSelectKe
             </div>
           )}
         </div>
+        <div className="flex justify-center mt-6">
+          <button
+            type="button"
+            onClick={() => onSearch(seedKeyword, topic, true)}
+            disabled={loading}
+            className="text-sm font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-5 py-2.5 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" /> מצא עוד מילות מפתח
+          </button>
+        </div>
+        </>
       )}
     </div>
   );

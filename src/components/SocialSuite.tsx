@@ -43,25 +43,34 @@ export default function SocialSuite() {
     return data;
   };
 
-  const handleGeneratePosts = async (params: { slug?: string; topic?: string; platforms: SocialPlatform[]; goal?: string }) => {
+  const handleGeneratePosts = async (params: { slug?: string; topic?: string; platforms: string[]; goal?: string }) => {
     setPostsLoading(true); setError(null);
     try { setPosts((await post('/api/social/generate-posts', { ...params, model })).result); }
     catch (e: any) { setError(e.message); }
     finally { setPostsLoading(false); }
   };
 
-  const handleResearch = async (topic: string, platform: SocialPlatform) => {
+  const handleResearch = async (topic: string, platform: SocialPlatform, append = false) => {
     setResearchLoading(true); setError(null);
-    try { setResearch((await post('/api/social/research-hashtags', { topic, platform, model })).result); }
-    catch (e: any) { setError(e.message); }
+    try {
+      const exclude = append && research ? research.hashtags.map((h) => h.tag) : [];
+      const data: SocialResearch = (await post('/api/social/research-hashtags', { topic, platform, model, exclude })).result;
+      setResearch((prev) =>
+        append && prev
+          ? { ...data, hashtags: [...prev.hashtags, ...(data.hashtags || [])], angles: [...prev.angles, ...(data.angles || [])] }
+          : data
+      );
+    } catch (e: any) { setError(e.message); }
     finally { setResearchLoading(false); }
   };
 
-  const handleCompetitors = async (topic: string, handle: string) => {
+  const handleCompetitors = async (topic: string, handle: string, append = false) => {
     setCompLoading(true); setError(null);
     try {
-      const data = await post('/api/social/competitor-social', { topic, handle, model });
-      setCompetitors(Array.isArray(data.competitors) ? data.competitors : []);
+      const exclude = append ? competitors.map((c) => c.name) : [];
+      const data = await post('/api/social/competitor-social', { topic, handle, model, exclude });
+      const fresh: SocialCompetitor[] = Array.isArray(data.competitors) ? data.competitors : [];
+      setCompetitors((prev) => (append ? [...prev, ...fresh] : fresh));
     } catch (e: any) { setError(e.message); }
     finally { setCompLoading(false); }
   };

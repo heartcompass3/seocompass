@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { SocialCompetitor } from '../types';
-import { Radar, Search, Users, Flame, Target, Sparkles, AtSign } from 'lucide-react';
+import { Radar, Search, Users, Flame, Target, Sparkles, AtSign, Plus } from 'lucide-react';
 
 interface SocialCompetitorSectionProps {
   loading: boolean;
   competitors: SocialCompetitor[];
-  onAnalyze: (topic: string, handle: string) => Promise<void>;
+  onAnalyze: (topic: string, handle: string, append?: boolean) => Promise<void>;
 }
 
 export default function SocialCompetitorSection({ loading, competitors, onAnalyze }: SocialCompetitorSectionProps) {
@@ -66,6 +66,7 @@ export default function SocialCompetitorSection({ loading, competitors, onAnalyz
       )}
 
       {!loading && competitors.length > 0 && (
+        <div className="space-y-6">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {competitors.map((c, idx) => (
             <div key={idx} className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs flex flex-col transition-all hover:shadow-md hover:border-slate-300">
@@ -110,6 +111,17 @@ export default function SocialCompetitorSection({ loading, competitors, onAnalyz
               )}
             </div>
           ))}
+        </div>
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => onAnalyze(topic, handle, true)}
+            disabled={loading}
+            className="text-sm font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-5 py-2.5 flex items-center gap-2 transition-all disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" /> מצא עוד מתחרים
+          </button>
+        </div>
         </div>
       )}
     </div>

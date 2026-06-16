@@ -119,11 +119,28 @@ export interface CarouselSlide {
   slideText: string;
 }
 
+export interface ReelsBeat {
+  timecode: string;     // e.g. "0-3s"
+  onScreenText: string;
+  voiceover: string;
+  visual: string;
+}
+
+export interface ReelsScript {
+  hook: string;
+  beats: ReelsBeat[];
+  caption: string;
+  hashtags: string[];
+  audioIdea: string;
+  cta: string;
+}
+
 export interface GeneratedSocialPosts {
   sourceTitle: string;
   sourceUrl?: string;
-  posts: SocialPost[];        // one per requested platform
-  carousel: CarouselSlide[];  // optional IG carousel outline (may be empty)
+  posts: SocialPost[];          // caption posts (instagram/facebook)
+  carousel: CarouselSlide[];    // optional IG carousel outline (may be empty)
+  reels?: ReelsScript | null;   // optional Reels script when reels requested
 }
 
 // --- Hashtag & topic research ---
