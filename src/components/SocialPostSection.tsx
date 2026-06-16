@@ -144,7 +144,14 @@ export default function SocialPostSection({ articles, loading, result, onGenerat
           {result.sourceTitle && (
             <div className="flex items-center gap-2 text-slate-600 text-sm">
               <Sparkles className="w-4 h-4 text-blue-500" />
-              <span>פוסטים שנוצרו עבור: <span className="font-bold text-slate-800">{result.sourceTitle}</span></span>
+              <span>
+                פוסטים שנוצרו עבור:{' '}
+                {result.sourceUrl ? (
+                  <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-600 hover:underline">{result.sourceTitle}</a>
+                ) : (
+                  <span className="font-bold text-slate-800">{result.sourceTitle}</span>
+                )}
+              </span>
             </div>
           )}
 

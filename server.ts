@@ -81,6 +81,39 @@ function parseJSONResponse(text: string) {
   }
 }
 
+// Run a Gemini call with automatic fallback to a lighter, higher-quota model
+// on 429 / quota errors. Grounding tools (googleSearch) have a tiny separate
+// free-tier quota, so the retry also drops them.
+async function generateWithFallback(
+  client: GoogleGenAI,
+  args: { model: string; contents: any; config?: any }
+) {
+  const FALLBACK = "gemini-3.1-flash-lite";
+  try {
+    return await client.models.generateContent(args);
+  } catch (err: any) {
+    const msg = String(err?.message || err);
+    const isQuota = err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg);
+    if (!isQuota) throw err;
+    const retryConfig = { ...(args.config || {}) };
+    delete (retryConfig as any).tools;
+    return await client.models.generateContent({
+      model: FALLBACK,
+      contents: args.contents,
+      config: retryConfig,
+    });
+  }
+}
+
+// Turn a raw provider error into a friendly Hebrew message (esp. quota/429).
+function friendlyError(err: any): string {
+  const msg = String(err?.message || err || "");
+  if (err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg)) {
+    return "המכסה של Gemini נוצלה כרגע. עבור ל'מודל חסכוני · Flash Lite' בבורר המודל למעלה, או בדוק את מגבלות/חיוב ה-API. אפשר גם לנסות שוב בעוד דקה.";
+  }
+  return msg || "שגיאה לא צפויה";
+}
+
 // Fetch live Google Israel SERP results via SerpApi (https://serpapi.com).
 // Returns null when no SERPAPI_KEY is configured so callers can fall back to
 // a Gemini-only flow. Throws on an actual API/network error.
@@ -678,7 +711,7 @@ app.get("/api/social/articles", async (_req, res) => {
 // S2. Generate FB/IG posts from a Sanity article (by slug) or a free topic.
 app.post("/api/social/generate-posts", async (req, res) => {
   try {
-    const { slug, topic, customText, platforms, goal } = req.body;
+    const { slug, topic, customText, platforms, goal, model } = req.body;
     const wanted: string[] =
       Array.isArray(platforms) && platforms.length ? platforms : ["instagram", "facebook"];
 
@@ -724,11 +757,31 @@ ${sourceUrl ? `קישור למאמר המלא: ${sourceUrl}` : ""}
 חומר המקור:
 ${(sourceBody || "").slice(0, 6000)}
 
-חוקי הקול של מצפן הלב (מחייבים):
-1. אסור מקפים ארוכים (—). אסור פתיחות נוסחתיות ("רבים מאיתנו", "האם גם אתם", "כולנו מכירים").
-2. קודם סצנה/רגש ספציפי, לא תזה מופשטת. עברית מדוברת, משפטים קצרים. RTL.
-3. בלי הבטחות תוצאה ובלי CTA קר. הסיום מזמין מחשבה או פנייה רכה.
-4. אינסטגרם: ויזואלי, אישי, האשטגים בסוף. פייסבוק: מעט ארוך יותר, סיפורי, פחות האשטגים.
+חוקי הקול של מצפן הלב — מחייבים, אי-עמידה פוסלת את הפוסט:
+
+כללי פסילה מוחלטים:
+- אסור מקפים ארוכים (—) בשום צורה.
+- אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
+- אסור רשימות בפוסט.
+- אסור CTA קר ("צור קשר", "הזמן פגישה", "אני כאן בשבילך").
+- אסור הבטחת תוצאה ("תשתחרר", "תפסיק לריב"). מבטיחים הבנה, לא תוצאה.
+- אסור "השיטה שלנו" / "הכלים שלנו". יוסי מדבר מהחיים, לא מהמוצר.
+- אסור לתייג או לתת שם לאבחנה ("אתה פרפקציוניסט"). מראים את התופעה, לא קוראים לה בשם.
+
+הקול:
+- סמכותי וחברי בו זמנית. אדם שעבר, לא מומחה מתנשא ולא חבר מתרפס. אגרוף בבטן בעדינות.
+- קודם סיפור, רק אחר כך הנקודה. נכנסים דרך הצד, סצנה אחת חיה וספציפית, לא תזה מופשטת.
+- ספציפיות כהוכחת נוכחות: "הוא צחק חצי שנייה אחרי כולם" ולא "הוא הרגיש לא שייך".
+- מדברים על "הוא/היא" (סיפור על מישהו אחר), לא "אתה". זיהוי עצמי דרך אדם אחר חזק יותר.
+- בפוסט: שאלה היא חריג, התמונה היא ברירת המחדל. שאלה מותרת רק כתהייה בקול רם של יוסי, לא כפנייה ישירה לקורא.
+- אם מביאים מחקר: חוקר עם שם וממצא אחד ברור, מובלע במשפט אחד בתוך הסיפור. לא "מחקרים מראים".
+
+סדר הרגשות (מאיה אנג'לו): קודם "מישהו מבין אותי", אחר כך אגרוף בבטן של אמת, ואז דחיפות שקטה.
+הסיום: לולאה פתוחה. תמונה או תהייה שנשארת בגוף, לא מסקנה מסכמת ולא פתרון. אם הקורא יכול לסגור ולהרגיש שקיבל הכל, נכשלת.
+
+התאמות פלטפורמה:
+- אינסטגרם: ויזואלי ואישי, כיתוב קצר-בינוני, מעברי שורה נושמים, האשטגים בסוף בלבד.
+- פייסבוק: סיפורי ומעט ארוך יותר, כמעט בלי האשטגים.
 
 החזר אך ורק JSON במבנה הבא (בלי טקסט מחוץ ל-JSON):
 {
@@ -751,12 +804,12 @@ ${(sourceBody || "").slice(0, 6000)}
 
 חובה: צור אובייקט post נפרד לכל פלטפורמה מבוקשת (${wanted.join(", ")}). אם אינסטגרם מבוקש, מלא גם carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
 
-    const response = await client.models.generateContent({
-      model: process.env.SOCIAL_MODEL || "gemini-3.5-flash",
+    const response = await generateWithFallback(client, {
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.5-flash",
       contents: prompt,
       config: {
         systemInstruction:
-          "You are Yossi Medalsi's social media content strategist for the Hebrew brand 'מצפן הלב'. You turn articles into platform-native FB/IG posts in his exact voice: story first, no em-dashes, no formulaic openings, no cold CTAs.",
+          "אתה אסטרטג התוכן לרשתות של יוסי מדלסי, מותג 'מצפן הלב'. אתה הופך מאמרים לפוסטים בקול המדויק שלו: סיפור קודם, בלי מקפים ארוכים, בלי פתיחות נוסחתיות, בלי CTA קר, בלי הבטחות תוצאה. מדברים על 'הוא/היא' ולא 'אתה', ומסיימים בלולאה פתוחה.",
         responseMimeType: "application/json",
       },
     });
@@ -766,14 +819,14 @@ ${(sourceBody || "").slice(0, 6000)}
     res.json({ result: data });
   } catch (error: any) {
     console.error("Error in social/generate-posts:", error);
-    res.status(500).json({ error: error.message || "שגיאה בייצור הפוסטים" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
 // S3. Hashtag & topic research (Gemini estimates; optional SerpApi grounding).
 app.post("/api/social/research-hashtags", async (req, res) => {
   try {
-    const { topic, platform } = req.body;
+    const { topic, platform, model } = req.body;
     if (!topic) return res.status(400).json({ error: "חובה לספק נושא למחקר" });
 
     const client = getAIClient();
@@ -806,8 +859,8 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 
 הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
 
-    const response = await client.models.generateContent({
-      model: process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+    const response = await generateWithFallback(client, {
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
@@ -819,19 +872,32 @@ app.post("/api/social/research-hashtags", async (req, res) => {
     res.json({ result: data });
   } catch (error: any) {
     console.error("Error in social/research-hashtags:", error);
-    res.status(500).json({ error: error.message || "שגיאה במחקר ההאשטגים" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
 // S4. Competitor social analysis (Gemini + Google Search grounding; estimated).
 app.post("/api/social/competitor-social", async (req, res) => {
   try {
-    const { topic, handle } = req.body;
+    const { topic, handle, model } = req.body;
     if (!topic) return res.status(400).json({ error: "חובה לספק נושא או נישה" });
 
     const client = getAIClient();
 
-    const prompt = `בצע ניתוח מתחרים ברשתות חברתיות (אינסטגרם/פייסבוק) בעברית עבור הנישה: "${topic}".
+    // Ground in real Google IL signals when SerpApi is configured. We avoid the
+    // googleSearch grounding tool here because its tiny separate quota caused 429s.
+    let grounding = "";
+    try {
+      const serp = await fetchSerpResults(topic);
+      if (serp && serp.organic.length) {
+        grounding = `\nתוצאות אמיתיות מגוגל ישראל עבור "${topic}" (בסס עליהן):\n${serp.organic
+          .slice(0, 8)
+          .map((r: any) => `- ${r.domain} — ${r.title}`)
+          .join("\n")}\n`;
+      }
+    } catch { /* ignore */ }
+
+    const prompt = `בצע ניתוח מתחרים ברשתות חברתיות (אינסטגרם/פייסבוק) בעברית עבור הנישה: "${topic}".${grounding}
 ${handle ? `החשבון שלנו: ${handle}.` : ""}
 המותג שלנו: "מצפן הלב" של יוסי מדלסי, מאמן רגשי לנוער/הורים/זוגות, בקנה מידה של נותן שירות עצמאי.
 
@@ -855,12 +921,12 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
 ]
 כל הטקסט בעברית מקצועית.`;
 
-    const response = await client.models.generateContent({
-      model: process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
+    const response = await generateWithFallback(client, {
+      model: model || process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
-        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
       },
     });
 
@@ -868,14 +934,14 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
     res.json({ competitors: data });
   } catch (error: any) {
     console.error("Error in social/competitor-social:", error);
-    res.status(500).json({ error: error.message || "שגיאה בניתוח המתחרים" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
 // S5. Social strategy chat (Gemini; optional live search).
 app.post("/api/social/chat", async (req, res) => {
   try {
-    const { chatHistory, message, useSearch } = req.body;
+    const { chatHistory, message, useSearch, model } = req.body;
     if (!message) return res.status(400).json({ error: "חובה לספק הודעה" });
 
     const client = getAIClient();
@@ -891,8 +957,8 @@ app.post("/api/social/chat", async (req, res) => {
     };
     if (useSearch) config.tools = [{ googleSearch: {} }];
 
-    const response = await client.models.generateContent({
-      model: process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+    const response = await generateWithFallback(client, {
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
       contents,
       config,
     });
@@ -900,7 +966,7 @@ app.post("/api/social/chat", async (req, res) => {
     res.json({ text: response.text });
   } catch (error: any) {
     console.error("Error in social/chat:", error);
-    res.status(500).json({ error: error.message || "שגיאה בצ'אט" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 

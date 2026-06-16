@@ -15,6 +15,7 @@ export default function SocialSuite() {
   const [tab, setTab] = useState<SocialTab>('posts');
   const [articles, setArticles] = useState<SocialArticleRef[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [model, setModel] = useState('gemini-3.5-flash');
 
   // Post generator
   const [postsLoading, setPostsLoading] = useState(false);
@@ -44,14 +45,14 @@ export default function SocialSuite() {
 
   const handleGeneratePosts = async (params: { slug?: string; topic?: string; platforms: SocialPlatform[]; goal?: string }) => {
     setPostsLoading(true); setError(null);
-    try { setPosts((await post('/api/social/generate-posts', params)).result); }
+    try { setPosts((await post('/api/social/generate-posts', { ...params, model })).result); }
     catch (e: any) { setError(e.message); }
     finally { setPostsLoading(false); }
   };
 
   const handleResearch = async (topic: string, platform: SocialPlatform) => {
     setResearchLoading(true); setError(null);
-    try { setResearch((await post('/api/social/research-hashtags', { topic, platform })).result); }
+    try { setResearch((await post('/api/social/research-hashtags', { topic, platform, model })).result); }
     catch (e: any) { setError(e.message); }
     finally { setResearchLoading(false); }
   };
@@ -59,14 +60,14 @@ export default function SocialSuite() {
   const handleCompetitors = async (topic: string, handle: string) => {
     setCompLoading(true); setError(null);
     try {
-      const data = await post('/api/social/competitor-social', { topic, handle });
+      const data = await post('/api/social/competitor-social', { topic, handle, model });
       setCompetitors(Array.isArray(data.competitors) ? data.competitors : []);
     } catch (e: any) { setError(e.message); }
     finally { setCompLoading(false); }
   };
 
   const handleChatSend = async (message: string, history: SocialChatMessage[], useSearch: boolean) => {
-    const data = await post('/api/social/chat', { message, chatHistory: history, useSearch });
+    const data = await post('/api/social/chat', { message, chatHistory: history, useSearch, model });
     return data.text || 'לא התקבלה תשובה.';
   };
 
@@ -79,6 +80,19 @@ export default function SocialSuite() {
 
   return (
     <div className="space-y-6">
+      {/* Model selector — switch to a higher-quota model if you hit 429 */}
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[11px] text-slate-400">מודל ה-AI:</span>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          className="bg-white text-slate-700 text-xs py-1.5 px-3 border border-slate-200 rounded-lg outline-none focus:border-blue-500"
+        >
+          <option value="gemini-3.5-flash">איכותי · 3.5 Flash (מומלץ לפוסטים)</option>
+          <option value="gemini-3.1-flash-lite">חסכוני · Flash Lite (מכסה גבוהה)</option>
+        </select>
+      </div>
+
       <div className="border-b border-slate-200">
         <div className="flex space-x-2 space-x-reverse overflow-x-auto pb-px">
           {tabs.map(({ key, label, Icon }) => (
