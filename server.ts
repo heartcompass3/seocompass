@@ -154,13 +154,13 @@ async function generateWithFallback(
   client: GoogleGenAI,
   args: { model: string; contents: any; config?: any }
 ) {
-  const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash";
+  const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.8-flash";
   try {
     return await client.models.generateContent(args);
   } catch (err: any) {
     const msg = String(err?.message || err);
-    const isQuota = err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg);
-    if (!isQuota) throw err;
+    const isRetryable = err?.status === 429 || err?.status === 404 || /429|404|RESOURCE_EXHAUSTED|quota|rate.?limit|no longer available/i.test(msg);
+    if (!isRetryable) throw err;
     const retryConfig = { ...(args.config || {}) };
     delete (retryConfig as any).tools;
     return await client.models.generateContent({
@@ -175,7 +175,10 @@ async function generateWithFallback(
 function friendlyError(err: any): string {
   const msg = String(err?.message || err || "");
   if (err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg)) {
-    return "המכסה של Gemini נוצלה כרגע. עבור ל'מודל חסכוני · 2.0 Flash' בבורר המודל למעלה, או בדוק את מגבלות/חיוב ה-API. אפשר גם לנסות שוב בעוד דקה.";
+    return "המכסה של Gemini נוצלה כרגע. המערכת עוברת אוטומטית ל-Gemini 3.8 Flash, או שניתן לנסות שוב בעוד דקה.";
+  }
+  if (err?.status === 404 || /not.?found|no longer available/i.test(msg)) {
+    return "המודל המבוקש עודכן על ידי גוגל ל-Gemini 3.8 Flash.";
   }
   return msg || "שגיאה לא צפויה";
 }
@@ -305,7 +308,7 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
 
     const response = await client.models.generateContent({
       // Lightweight fast model for competitor analysis
-      model: process.env.COMPETITOR_MODEL || "gemini-2.5-flash",
+      model: process.env.COMPETITOR_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config,
     });
@@ -382,7 +385,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      model: process.env.KEYWORD_MODEL || "gemini-2.5-flash",
+      model: process.env.KEYWORD_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: kwConfig,
     });
@@ -405,7 +408,7 @@ app.post("/api/seo/generate-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-3.8-flash";
 
     let searchGuidance = "";
     if (useSearch) {
@@ -592,7 +595,7 @@ app.post("/api/seo/edit-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-3.8-flash";
 
     let searchGuidance = "";
     if (useSearch) {
@@ -725,7 +728,7 @@ ${content}
 }`;
 
     const response = await client.models.generateContent({
-      model: process.env.AUDIT_MODEL || "gemini-2.5-flash",
+      model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional SEO content auditor with deep knowledge of search intent, NLP patterns, and semantic search.",
@@ -782,7 +785,7 @@ app.post("/api/seo/chat-expert", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      model: process.env.CHAT_MODEL || "gemini-2.5-flash",
+      model: process.env.CHAT_MODEL || "gemini-3.8-flash",
       contents: geminiContents,
       config: chatConfig,
     });
@@ -1074,7 +1077,7 @@ ${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.gol
 }`;
 
     const resp = await client.models.generateContent({
-      model: process.env.AUDIT_MODEL || "gemini-2.5-flash",
+      model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an elite SEO strategist specializing in keyword cannibalization prevention and content differentiation for HeartCompass.",
@@ -1204,7 +1207,7 @@ ${content}
 }`;
 
     const resp = await generateWithFallback(client, {
-      model: process.env.ARTICLE_MODEL || "gemini-2.5-flash",
+      model: process.env.ARTICLE_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are the head of content and brand campaigns for HeartCompass. You turn in-depth psychological/parenting articles into cohesive, high-converting 360-degree campaigns in Yossi Medalsi's exact voice.",
@@ -1355,7 +1358,7 @@ ${(sourceBody || "").slice(0, 6000)}
 חובה: צור אובייקט post נפרד לכל פלטפורמת כיתוב מבוקשת (${captionPlatforms.join(", ") || "אין"}). ${wantsReels ? "בנוסף, מלא את האובייקט reels עם סקריפט וידאו מלא (5-7 ביטים עם timecode, טקסט על המסך, voiceover וויזואל)." : "החזר reels כ-null."} אם אינסטגרם מבוקש, מלא carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction:
@@ -1413,7 +1416,7 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
@@ -1478,7 +1481,7 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
 כל הטקסט בעברית מקצועית.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.COMPETITOR_MODEL || "gemini-2.5-flash",
+      model: model || process.env.COMPETITOR_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
@@ -1514,7 +1517,7 @@ app.post("/api/social/chat", async (req, res) => {
     if (useSearch) config.tools = [{ googleSearch: {} }];
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
+      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
       contents,
       config,
     });
