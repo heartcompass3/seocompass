@@ -81,6 +81,72 @@ function parseJSONResponse(text: string) {
   }
 }
 
+// Get Sanity Auth Token from env or local config
+function getSanityToken(): string | null {
+  if (process.env.SANITY_AUTH_TOKEN) return process.env.SANITY_AUTH_TOKEN;
+  try {
+    const os = require("os");
+    const fs = require("fs");
+    const cfgPath = path.join(os.homedir(), ".config", "sanity", "config.json");
+    if (fs.existsSync(cfgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+      if (parsed.authToken) return parsed.authToken;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+// Convert Markdown text to Sanity Portable Text blocks
+function convertMarkdownToPortableText(markdown: string): any[] {
+  if (!markdown) return [];
+  const lines = markdown.split("\n");
+  const blocks: any[] = [];
+  let blockIndex = 1;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith("## ")) {
+      blocks.push({
+        _type: "block",
+        _key: `blk_${blockIndex++}`,
+        style: "h2",
+        markDefs: [],
+        children: [{ _type: "span", _key: `spn_${blockIndex++}`, text: line.replace(/^##\s+/, ""), marks: [] }]
+      });
+    } else if (line.startsWith("### ")) {
+      blocks.push({
+        _type: "block",
+        _key: `blk_${blockIndex++}`,
+        style: "h3",
+        markDefs: [],
+        children: [{ _type: "span", _key: `spn_${blockIndex++}`, text: line.replace(/^###\s+/, ""), marks: [] }]
+      });
+    } else if (line.startsWith("> ")) {
+      blocks.push({
+        _type: "block",
+        _key: `blk_${blockIndex++}`,
+        style: "blockquote",
+        markDefs: [],
+        children: [{ _type: "span", _key: `spn_${blockIndex++}`, text: line.replace(/^>\s+/, ""), marks: [] }]
+      });
+    } else {
+      blocks.push({
+        _type: "block",
+        _key: `blk_${blockIndex++}`,
+        style: "normal",
+        markDefs: [],
+        children: [{ _type: "span", _key: `spn_${blockIndex++}`, text: line, marks: [] }]
+      });
+    }
+  }
+
+  return blocks;
+}
+
 // Run a Gemini call with automatic fallback to a lighter, higher-quota model
 // on 429 / quota errors. Grounding tools (googleSearch) have a tiny separate
 // free-tier quota, so the retry also drops them.
@@ -88,7 +154,7 @@ async function generateWithFallback(
   client: GoogleGenAI,
   args: { model: string; contents: any; config?: any }
 ) {
-  const FALLBACK = "gemini-3.1-flash-lite";
+  const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash";
   try {
     return await client.models.generateContent(args);
   } catch (err: any) {
@@ -109,7 +175,7 @@ async function generateWithFallback(
 function friendlyError(err: any): string {
   const msg = String(err?.message || err || "");
   if (err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg)) {
-    return "המכסה של Gemini נוצלה כרגע. עבור ל'מודל חסכוני · Flash Lite' בבורר המודל למעלה, או בדוק את מגבלות/חיוב ה-API. אפשר גם לנסות שוב בעוד דקה.";
+    return "המכסה של Gemini נוצלה כרגע. עבור ל'מודל חסכוני · 2.0 Flash' בבורר המודל למעלה, או בדוק את מגבלות/חיוב ה-API. אפשר גם לנסות שוב בעוד דקה.";
   }
   return msg || "שגיאה לא צפויה";
 }
@@ -238,9 +304,8 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      // Lightweight model: far higher free-tier limits (RPD 500 vs 20) to avoid
-      // exhausting quota on competitor analysis.
-      model: process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
+      // Lightweight fast model for competitor analysis
+      model: process.env.COMPETITOR_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config,
     });
@@ -317,7 +382,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: process.env.KEYWORD_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config: kwConfig,
     });
@@ -331,7 +396,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
   }
 });
 
-// 3. SEO Article Generator Router
+// 3. SEO & GEO Article Generator Router (HeartCompass Growth Doctrine & 2026 Engine Alignment)
 app.post("/api/seo/generate-article", async (req, res) => {
   try {
     const { keyword, audience, tone, additionalKeywords, guidelines, useSearch, selectedModel } = req.body;
@@ -340,64 +405,162 @@ app.post("/api/seo/generate-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || "gemini-3.5-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
 
     let searchGuidance = "";
     if (useSearch) {
-      searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך לבצע שאילתות בגוגל על הנושא '${keyword}' ועל הטרנדים ומילות המפתח האחרונות נכון לשנת 2026 כדי להפיק טקסט מדויק, רלוונטי, ומלא בעובדות ודוגמאות אמיתיות מהמציאות הנוכחית בארץ.`;
+      searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך לבצע שאילתות בגוגל על הנושא '${keyword}', ועל שאלות חיפוש עדכניות של הורים/מתבגרים בישראל נכון לשנת 2026 כדי להפיק טקסט מדויק, רלוונטי, ומלא בעובדות ודוגמאות אמיתיות מהמציאות הנוכחית בארץ.`;
     }
 
-    const prompt = `כתוב מאמר עומק לאתר "מצפן הלב" של יוסי מדלסי, סביב מילת המפתח הראשית הבאה:
+    const prompt = `כתוב מאמר עומק מותאם למנועי חיפוש ו-AI (גוגל, Gemini, ChatGPT, Perplexity) עבור אתר "מצפן הלב" של יוסי מדלסי (https://www.heartcompass.co.il).
 מילת מפתח ראשית: ${keyword}
 קהל יעד: ${audience || "הורים למתבגרים, נוער, וזוגות"}
-סגנון כתיבה (Tone): ${tone || "סמכותי וחברי בו זמנית, אדם שעבר"}
+סגנון כתיבה (Tone): ${tone || "סמכותי וחברי בו זמנית, אדם שעבר, בגובה העיניים, סקרן, אנושי"}
 מילות מפתח נוספות לשילוב: ${additionalKeywords || "ללא מילות מפתח נוספות"}
 הנחיות מיוחדות מהלקוח: ${guidelines || "אין משהו מיוחד"}${searchGuidance}
 
-חוקי הקול של מצפן הלב (מחייבים, אי-עמידה בהם פוסלת את המאמר):
-1. כללי פסילה מוחלטים: אסור מקפים ארוכים (—) בשום צורה. אסור סימני פיסוק מוגזמים. אסור דימויים מנופחים. אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
-2. קודם הסיפור, רק אחר כך השכבה הסמנטית. פותחים בכניסה דרך הצד, סצנה אחת חיה וספציפית, לא ישר לנושא ולא בתזה מופשטת.
-3. עברית מדוברת, משפטים קצרים שעומדים בפני עצמם. פסקה היא משפט עד שלושה. RTL תמיד.
-4. אוטוריטה (חוקר/מחקר) נכנסת כדי להוכיח נקודה, במשפט אחד מובלע בסיפור, ולא כרשימת מקורות ולא כפתרון.
-5. הסיום הוא שאלת זהות פתוחה שנשארת עם הקורא, לעולם לא CTA קר ולא "צור קשר" ולא הבטחת תוצאה.
-6. לפחות משפט הגדרה עצמאי אחד, חד, שמנוע AI יכול לחלץ כתשובה שלמה לשאלת החיפוש (זה שדה aiCitation).
+=======================================================
+מקור האמת: דוקטרינת "מערכת הצמיחה" של מצפן הלב
+=======================================================
+1. תפיסת העולם והבידול המרכזי:
+- "אנשים לא נתקעים כי חסר להם ידע (בעידן ה-AI יש לכולם פסיכולוג בכיס וכל תשובה בעולם), אלא כי פחדים, אמונות ודפוסים שנוצרו פעם כדי להגן ממשיכים לנהל את הבחירות שלהם."
+- "המוח מעדיף את הסבל המוכר על פני אי-הוודאות של שקט."
+- שורש מול סימפטום: התנהגות קשה, הסתגרות בחדר, מסכים, שקרים, מאבקי כוח, חרדות או ציונים ירודים הם לא הבעיה האמיתית. הם הסימפטום והפתרון ההישרדותי שהמוח מצא כדי לשמור על האדם מפגיעה. לכן אנחנו לא מנסים 'לתקן את הילד בכוח', אלא מזהים על מה הדפוס מגן ומשנים את המערכת והשפה.
 
-מבנה ארבעת מרכיבי ה-SEO (הקפד על ההבחנה ביניהם):
-- title: שאלת חיפוש נפוצה, מה שאדם באמת מקליד בגוגל או ב-ChatGPT. לא כותרת ספרותית.
-- goldLine: תת-כותרת קצרה ומסקרנת שמתארת את המנגנון. משפט אחד חד ופרובוקטיבי, לקורא האנושי (לא ל-meta).
-- excerpt: תקציר ענייני של שניים עד שלושה משפטים תיאוריים, פונה למנוע, יושב ב-meta description ובכרטיס באתר.
-- urlSlug: מילות מפתח באנגלית מופרדות במקפים (למשל why-we-attract-unavailable-partners).
+2. נוסחת חמשת השלבים של שיטת מ.ס.ע (חובה למבנה גוף המאמר):
+- פתיחה (ללא כותרת H2): מה הילד עושה / מה האדם חווה (הסימפטום). תרחיש ספציפי, מציאותי וכואב מהיומיום (100-150 מילים).
+- H2 ראשון (שלב ה-מ': מיפוי): מה זה מפעיל בהורה / בנו ("הילד שבתוך ההורה"). למה אנחנו נבהלים מההסתגרות שלו? למה חייבים לשלוט? חיבור פסיכולוגי/נוירולוגי עדין.
+- H2 שני (שלב ה-ס': סילוק): למה אנחנו מגיבים ככה. חקירת הסיפור שהמוח מספר לעצמו ("אם הוא נכשל אני נכשלתי?"). פירוק אמונות מגבילות שירשנו מהילדות. (שים לב: אין שלב סלילה בשיטה! השלבים הם אך ורק: מיפוי, סילוק, עצמאות).
+- H2 שלישי: מה הילד לומד על עצמו מהתגובה הזו (הזהות המתעצבת מול תגובת ההורים).
+- H2 רביעי (שלב ה-ע': עצמאות): איך מ.ס.ע משנה את כל המעגל. מעבר מפעולה מתוך פחד לפעולה מתוך מה שהילד באמת צריך. כלים מעשיים לעצירת הלופ.
+- סיום משמעותי: הבטחה מותגית ושאלת זהות פתוחה שנשארת עם הקורא בגוף. לעולם ללא CTA שיווקי קר ("צרו קשר עכשיו") בגוף הטקסט!
 
-החזר את כל הנתונים במבנה JSON הבא בדיוק (אל תפרט הערות נוספות מחוץ ל-JSON):
+3. חמש האוטוריטות המחקריות המאושרות (שלב לפחות מושג/ממצא אחד מובלע בעדינות):
+- פרופ' חיים עומר: סמכות מעגנת, נוכחות הורית שקטה, הימנעות מ"מלכוד ההסברים", "להכות בברזל כשהוא קר".
+- ד"ר דן סיגל: המוח הדו-קומתי, היפוך המוח (Flipping the lid), ויסות רגשי משותף (Co-regulation).
+- אלפרד אדלר: הצורך בשייכות ומשמעות, מאבק כוח כמטרה מוטעית של מתבגר מיואש, עידוד מול שבח.
+- דונלד ויניקוט: ההורה הטוב דיו (Good enough parent), החזקה רגשית (Holding), הישרדות ההורה מול תוקפנות המתבגר.
+- ד"ר מרשל רוזנברג: תקשורת לא-אלימה (NVC), שפת הג'ירפה מול שפת התן, התנהגות קשה כביטוי טרגי של צורך לא מסופק.
+
+4. חוקי הברזל לשפה ולסגנון (עברית נקייה ללא סימני AI):
+- אסור מוחלט על מקפים ארוכים (—) בשום צורה. השתמש בנקודה, פסיק, נקודתיים או סוגריים.
+- אסור מרכאות סרק (Scare quotes) סביב מילים (לא 'דווקא', לא 'נכון').
+- אסור פתיחות נוסחתיות וקלישאות ("בעידן המודרני", "בעולם של היום", "רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
+- אסור מילות AI: "מהווה", "להוות", "משמש כ", "הינו/הינה", "מתאפיין ב", "לייצר ערך/קשר/תחושה", "חשוב לציין", "יש לציין", "ראוי להדגיש".
+- אסור "בנוסף" / "יתרה מכך" בראש פסקאות.
+- שורת מחבר: "יוסי מדלסי · מומחה לשחרור דפוסים" (עם נקודה אמצעית).
+
+=======================================================
+התאמה למנועי חיפוש ו-GEO (Generative Engine Optimization 2026):
+=======================================================
+- title: שאלת חיפוש ישירה שישראלים מקלידים (עד 70 תווים), הכוללת את מילת המפתח.
+- goldLine: שורת מסגור אחת קצרה ומסקרנת של המנגנון (עד 12 מילים).
+- excerpt: תקציר ענייני ומדויק של 150-160 תווים לגוגל ולכרטיס באתר.
+- aiCitation: משפט הגדרה עצמאי אחד וחד, המשלב מחקר ומספרים, שמנועי AI (גוגל AI Overviews, Gemini, Perplexity) ישלפו כתשובה מלאה.
+- disambiguatingDescription: 2-4 משפטים המסבירים לזחלני AI בדיוק במה המאמר עוסק ובמה הוא אינו עוסק.
+- keyTakeaways: כותרת ו-4-5 נקודות תמציתיות של תובנות מהירות ל-Featured Snippets.
+- painTags: 4-6 מילות מפתח וכאבים מדויקים בעברית.
+- searchPhrases: 5-7 ביטויי ושאלות Long-tail שאנשים מחפשים בפועל.
+- domain: אחד מתוך: "parents", "youth", "personal", "relationships".
+- contentRole: "supporting" (ברירת מחדל), "pillar", או "money".
+- searchIntent: "informational" (ברירת מחדל), "commercial", או "transactional".
+- insightPlacement: קטגוריה ועוגן רשמי מהאתר בלבד (למשל: parents -> "הדפוסים והתגובות שלי כהורה" עם קטגוריית משנה "גבולות, מריבות ושגרה בבית").
+- sources: 3-4 מקורות אקדמיים/מחקריים איכותיים.
+- cta: בלוק קריאה לפעולה מלא הכולל וואטסאפ ליוסי: https://wa.me/972544580285.
+- jsonLdSchema: סכמת Schema.org מלאה ב-JSON-LD (@graph המכיל Article, FAQPage ו-Person של יוסי מדלסי).
+
+החזר את התוצאה אך ורק במבנה ה-JSON הבא (ללא טקסט עודף מחוץ ל-JSON):
 {
-  "id": "מזהה ייחודי קצר שאתה מייצר",
+  "id": "art_${Date.now()}",
   "keyword": "${keyword}",
-  "title": "כותרת בנוסח שאלת חיפוש (H1)",
-  "goldLine": "תת-כותרת המנגנון, משפט אחד חד",
-  "metaTitle": "כותרת SEO עד 60 תווים",
-  "metaDescription": "תיאור מטא עד 155 תווים, זהה או נגזר מה-excerpt",
-  "excerpt": "תקציר ענייני של 2-3 משפטים להדבקה בשדה excerpt ב-Sanity",
-  "urlSlug": "english-keywords-with-hyphens",
-  "authorLine": "שורת סמכות קצרה על הכותב (שדה authorLine ב-Sanity)",
-  "imageAlt": "תיאור alt קצר ומדויק לתמונה הראשית, כולל מילת המפתח באופן טבעי",
-  "tags": ["בחר ערך אחד או שניים אך ורק מתוך הרשימה הסגורה: זוגיות, הורות, נוער, קריירה, התפתחות אישית"],
-  "aiCitation": "משפט הגדרה עצמאי אחד וחד שעונה על שאלת החיפוש במלואה ללא הקשר נוסף",
-  "wordCount": 850,
+  "title": "כותרת בנוסח שאלת חיפוש אמיתית (עד 70 תווים)",
+  "goldLine": "תת-כותרת המנגנון, משפט אחד חד עד 12 מילים",
+  "metaTitle": "כותרת SEO עד 60 תווים | מצפן הלב",
+  "metaDescription": "תיאור מטא ענייני ומניע לפעולה עד 155 תווים",
+  "excerpt": "תקציר ענייני של 150-160 תווים לכרטיס באתר ולגוגל",
+  "urlSlug": "english-keyword-slug-with-hyphens",
+  "authorLine": "יוסי מדלסי · מומחה לשחרור דפוסים",
+  "imageAlt": "תיאור אלט אמפתי ומדויק לתמונה הראשית כולל מילת המפתח",
+  "tags": ["הורות", "נוער"],
+  "domain": "parents",
+  "contentRole": "supporting",
+  "searchIntent": "informational",
+  "painTags": ["כאב 1", "מילת חיפוש 2", "חרדה 3", "דפוס 4"],
+  "disambiguatingDescription": "מאמר זה עוסק ב... מיועד ל... ואינו עוסק ב...",
+  "keyTakeaways": {
+    "heading": "מה תלמדו במאמר",
+    "items": ["נקודה מפתח 1", "נקודה 2", "נקודה 3", "נקודה 4"]
+  },
+  "aiCitation": "משפט תשובה עצמאי מלא עם נתוני מחקר ומספרים לציטוט ב-AI Overviews",
+  "aiContext": "הקשר נוסף למנועי AI אודות קהל היעד והמסגרת המחקרית",
+  "searchPhrases": ["שאילתת זנב ארוך 1?", "איך להתמודד עם 2?", "למה קורה 3?"],
+  "relatedToMethod": false,
+  "insightPlacement": {
+    "domain": "parents",
+    "category": "הדפוסים והתגובות שלי כהורה",
+    "secondary": [
+      { "domain": "parents", "category": "גבולות, מריבות ושגרה בבית" }
+    ]
+  },
+  "wordCount": 950,
   "outline": [
-    { "sectionTitle": "כותרת ביניים שהיא מנגנון ולא קישוט", "description": "תמצית קצרה" }
+    { "sectionTitle": "כותרת ביניים המנגנון", "description": "תמצית קצרה" }
   ],
-  "content": "גוף המאמר המלא בפורמט Markdown (כותרות ##, פסקאות, הדגשות). זה לתצוגה ולעריכה.",
-  "bodyHtml": "אותו גוף מאמר בדיוק כ-HTML עם dir=\\"rtl\\" בכל בלוק (<p dir=\\"rtl\\">, <h2 dir=\\"rtl\\">, <blockquote dir=\\"rtl\\">). בלי תגיות <html>/<head>/<body>, רק תוכן הגוף, מוכן להדבקה לעורך Portable Text של Sanity. בלי מקפים ארוכים.",
+  "content": "גוף המאמר המלא לפי 5 השלבים של מ.ס.ע בפורמט Markdown...",
+  "bodyHtml": "אותו גוף מאמר בדיוק כ-HTML עם dir=\\"rtl\\" בכל בלוק (<p dir=\\"rtl\\">, <h2 dir=\\"rtl\\">), בלי מקפים ארוכים, מוכן לסאניטי",
   "faqs": [
-    { "question": "שאלה נפוצה אמיתית?", "answer": "תשובה קצרה ומדויקת" }
+    { "question": "שאלה 1: הגדרה בסיסית?", "answer": "תשובה ישירה" },
+    { "question": "שאלה 2: האם ניתן לשנות/ללמוד את זה?", "answer": "תשובה" },
+    { "question": "שאלה 3: שאלת כאב ספציפית שההורה שואל ב-2 בלילה?", "answer": "תשובה אנושית ישירה" },
+    { "question": "שאלה 4: מה עושים צעד ראשון מעשי?", "answer": "תשובה מעשית" }
   ],
-  "seoTips": ["טיפ לקידום הדף", "טיפ לקישור פנימי (לבדוק שהוא קיים באתר לפני שימוש)"]
-}
-
-חובה: tags אך ורק מהרשימה הסגורה (זוגיות / הורות / נוער / קריירה / התפתחות אישית). content ו-bodyHtml חייבים להיות אותו מאמר בדיוק, רק בפורמט שונה. כתוב בעברית רהוטה ונקייה בקול של יוסי.`;
+  "sources": [
+    {
+      "title": "שם המחקר/ספר",
+      "authors": "שם החוקר (למשל: ד\"ר דן סיגל)",
+      "year": "2023",
+      "publisher": "הוצאה/כתב עת",
+      "url": "https://...",
+      "note": "ממצא עיקרי במשפט",
+      "sourceType": "academic"
+    }
+  ],
+  "cta": {
+    "heading": "רוצים להבין מה קורה עם הילד שלכם?",
+    "text": "שיחה אישית אחת יכולה לשנות את כל הדינמיקה בבית ולהחזיר את הרוגע לקשר.",
+    "buttonLabel": "אני רוצה להבין מה קורה עם הילד שלי",
+    "buttonHref": "https://wa.me/972544580285"
+  },
+  "seoTips": ["טיפ אופטימיזציה לדירוג", "טיפ לקישור פנימי"],
+  "jsonLdSchema": {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "כותרת המאמר",
+        "description": "תיאור מטא",
+        "author": {
+          "@type": "Person",
+          "name": "יוסי מדלסי",
+          "jobTitle": "מומחה לשחרור דפוסים ומפתח שיטת מ.ס.ע",
+          "url": "https://www.heartcompass.co.il"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "מצפן הלב",
+          "url": "https://www.heartcompass.co.il"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": []
+      }
+    ]
+  }
+}`;
 
     const config: any = {
-      systemInstruction: "You are Yossi Medalsi's content architect for the Hebrew brand 'מצפן הלב' (HeartCompass). You write emotionally precise Hebrew articles in his voice: story first, semantic SEO layer second. You strictly avoid em-dashes, formulaic openings, and cold CTAs. Every article maps cleanly onto the Sanity 'article' schema fields.",
+      systemInstruction: "You are Yossi Medalsi's elite content architect and GEO/SEO strategist for the Israeli brand 'מצפן הלב' (HeartCompass - https://www.heartcompass.co.il). You master the M.S.A method (Mapping, Clearing, Independence) and write emotionally precise, research-grounded Hebrew articles in his voice: story first, semantic GEO layer second. You strictly avoid em-dashes, formulaic openings, and AI cliché words.",
       responseMimeType: "application/json"
     };
 
@@ -429,14 +592,14 @@ app.post("/api/seo/edit-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || "gemini-3.5-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
 
     let searchGuidance = "";
     if (useSearch) {
       searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך להשתמש בכלי החיפוש גוגל כדי למצוא עובדות רלוונטיות, טרנדים או מידע חדש לשילוב במאמר לפי הנחיית המשתמש.`;
     }
 
-    const prompt = `אתה עורך תוכן ועיתונאי SEO בכיר מחברת דירוג מובילה. המשימה שלך היא לערוך ולשפר מאמר קיים בהתאם להנחיות המשתמש.
+    const prompt = `אתה עורך תוכן ועיתונאי SEO/GEO בכיר עבור המותג 'מצפן הלב' של יוסי מדלסי (https://www.heartcompass.co.il). המשימה שלך היא לערוך ולשפר מאמר קיים בהתאם להנחיות המשתמש, תוך שמירה מוחלטת על שיטת מ.ס.ע, חוקי הקול והסגנון (ללא מקפיים ארוכים, ללא מילות AI, שורת מחבר 'יוסי מדלסי · מומחה לשחרור דפוסים') ועדכון כל שדות ה-Sanity וה-GEO הרלוונטיים.
 
 הפרטים של המאמר המקורי:
 - כותרת המאמר: ${article.title}
@@ -444,7 +607,7 @@ app.post("/api/seo/edit-article", async (req, res) => {
 - כותרת מטא: ${article.metaTitle || ""}
 - תיאור מטא: ${article.metaDescription || ""}
 - סלאג: ${article.urlSlug || ""}
-- קידומי SEO אחרים: ${article.seoTips ? article.seoTips.join(", ") : ""}
+- תחום וסיווג: ${article.domain || "parents"} / ${article.contentRole || "supporting"}
 
 התוכן הנוכחי של המאמר בפורמט Markdown:
 ${article.content}
@@ -452,38 +615,48 @@ ${article.content}
 הנחיות העריכה והשיפור המבוקשות של המשתמש:
 "${editPrompt}"${searchGuidance}
 
-עליך לבצע את העריכה המבוקשת בצורה מדויקת, עקבית ומקצועית במיוחד, תוך שמירה על הנהלים הבאים:
-1. בצע את השינוי בתוכן המאמר, אך עדכן גם את תגיות המטא (metaTitle, metaDescription), הסלאג (urlSlug) והכותרת (title) אם הדבר מתבקש או ראוי לאלגוריתם הקידום.
-2. שמור על פורמט Markdown מלא, תקין ואסתטי.
-3. שמור על חוקי הקול של מצפן הלב: בלי מקפים ארוכים, בלי פתיחות נוסחתיות, בלי CTA קר. שמור על כל השדות של סכימת Sanity ועדכן אותם אם השינוי מצריך.
-4. החזר אך ורק מבנה JSON תואם לחלוטין (אל תפרט הערות נוספות מחוץ ל-JSON):
+עליך לבצע את העריכה המבוקשת בצורה מדויקת, עקבית ומקצועית במיוחד, תוך שמירה על כל שדות הסכימה המלאים של Sanity ו-GEO.
+החזר אך ורק מבנה JSON תואם ומלא (כולל title, goldLine, excerpt, metaTitle, metaDescription, content, bodyHtml, aiCitation, disambiguatingDescription, keyTakeaways, painTags, domain, searchIntent, sources, cta, faqs, jsonLdSchema):
 {
   "id": "${article.id || "art_" + Date.now()}",
   "keyword": "${article.keyword}",
-  "title": "הכותרת המעודכנת (או המקורית)",
-  "goldLine": "תת-כותרת המנגנון המעודכנת (או המקורית)",
-  "metaTitle": "SEO Title מעודכן",
-  "metaDescription": "Meta Description מעודכן",
-  "excerpt": "תקציר ענייני מעודכן (2-3 משפטים)",
-  "urlSlug": "excellent-slug-example",
-  "authorLine": "שורת סמכות (או המקורית)",
-  "imageAlt": "תיאור alt לתמונה הראשית",
-  "tags": ["מתוך הרשימה הסגורה בלבד: זוגיות, הורות, נוער, קריירה, התפתחות אישית"],
-  "aiCitation": "משפט הגדרה עצמאי שמנוע AI יכול לחלץ",
-  "wordCount": 850,
+  "title": "הכותרת המעודכנת",
+  "goldLine": "תת-כותרת המנגנון המעודכנת (עד 12 מילים)",
+  "metaTitle": "SEO Title מעודכן עד 60 תווים",
+  "metaDescription": "Meta Description מעודכן עד 155 תווים",
+  "excerpt": "תקציר ענייני מעודכן של 150-160 תווים",
+  "urlSlug": "${article.urlSlug || "updated-slug"}",
+  "authorLine": "יוסי מדלסי · מומחה לשחרור דפוסים",
+  "imageAlt": "תיאור alt מדויק",
+  "tags": ${JSON.stringify(article.tags || ["הורות"])},
+  "domain": "${article.domain || "parents"}",
+  "contentRole": "${article.contentRole || "supporting"}",
+  "searchIntent": "${article.searchIntent || "informational"}",
+  "painTags": ${JSON.stringify(article.painTags || ["הורות", "דפוסים"])},
+  "disambiguatingDescription": "הסבר מה המאמר עוסק ומה לא",
+  "keyTakeaways": { "heading": "מה תלמדו במאמר", "items": ["נקודה 1", "נקודה 2", "נקודה 3"] },
+  "aiCitation": "משפט הגדרה עצמאי עם מחקר לציטוט ב-AI",
+  "aiContext": "הקשר נוסף ל-AI",
+  "searchPhrases": ["שאילתה 1", "שאילתה 2"],
+  "relatedToMethod": ${Boolean(article.relatedToMethod)},
+  "insightPlacement": ${JSON.stringify(article.insightPlacement || { domain: "parents", category: "הדפוסים והתגובות שלי כהורה" })},
+  "wordCount": 950,
   "outline": [
     { "sectionTitle": "שם הפרק", "description": "תמצית קצרה" }
   ],
   "content": "התוכן המלא המעודכן בפורמט Markdown...",
-  "bodyHtml": "אותו תוכן מעודכן כ-HTML עם dir=\\"rtl\\" בכל בלוק, מוכן להדבקה ל-Sanity",
+  "bodyHtml": "אותו תוכן מעודכן כ-HTML עם dir=\\"rtl\\" בכל בלוק, מוכן ל-Sanity, ללא מקפים ארוכים",
   "faqs": [
-    { "question": "שאלה נפוצה", "answer": "תשובה קצרה" }
+    { "question": "שאלה נפוצה", "answer": "תשובה קצרה ומדויקת" }
   ],
-  "seoTips": ["טיפ אופטימיזציה ראשון", "טיפ שני"]
+  "sources": ${JSON.stringify(article.sources || [])},
+  "cta": ${JSON.stringify(article.cta || { heading: "רוצים להבין מה קורה עם הילד שלכם?", text: "שיחה אישית אחת יכולה לשנות את הדינמיקה בבית.", buttonLabel: "אני רוצה להבין מה קורה עם הילד שלי", buttonHref: "https://wa.me/972544580285" })},
+  "seoTips": ["טיפ ראשון", "טיפ שני"],
+  "jsonLdSchema": ${JSON.stringify(article.jsonLdSchema || { "@context": "https://schema.org", "@type": "Article" })}
 }`;
 
     const config: any = {
-      systemInstruction: "You are an elite SEO chief editor. Your goal is to rewrite, refine, expand, or correct text to perfection while ensuring the highest alignment with search algorithms.",
+      systemInstruction: "You are an elite SEO/GEO chief editor for 'מצפן הלב'. Your goal is to rewrite, refine, expand, or correct text to perfection while ensuring the highest alignment with search algorithms, AI Overviews citation standards, and Yossi Medalsi's voice.",
       responseMimeType: "application/json"
     };
 
@@ -552,7 +725,7 @@ ${content}
 }`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: process.env.AUDIT_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional SEO content auditor with deep knowledge of search intent, NLP patterns, and semantic search.",
@@ -609,7 +782,7 @@ app.post("/api/seo/chat-expert", async (req, res) => {
     }
 
     const response = await client.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: process.env.CHAT_MODEL || "gemini-2.5-flash",
       contents: geminiContents,
       config: chatConfig,
     });
@@ -625,11 +798,133 @@ app.post("/api/seo/chat-expert", async (req, res) => {
 // so the user controls exactly what is connected. Based purely on whether the
 // relevant env keys are present; no external calls are made here.
 app.get("/api/seo/status", (_req, res) => {
+  const sanityToken = getSanityToken();
   res.json({
     gemini: Boolean(process.env.GEMINI_API_KEY),
     serpapi: Boolean(process.env.SERPAPI_KEY),
     searchConsole: Boolean(process.env.VITE_GSC_SITE_URL),
+    sanity: Boolean(sanityToken),
   });
+});
+
+// 7. Sanity CMS Direct Draft Sync Router (One-Click Draft Creation in Production Sanity)
+app.post("/api/sanity/push-draft", async (req, res) => {
+  try {
+    const { article } = req.body;
+    if (!article || !article.title || !article.urlSlug) {
+      return res.status(400).json({ error: "חובה לספק מאמר עם כותרת וסלאג תקינים" });
+    }
+
+    const token = getSanityToken();
+    if (!token) {
+      return res.status(401).json({ error: "טוקן אימות של Sanity (SANITY_AUTH_TOKEN) חסר. הגדר אותו בהגדרות המערכת או ב-config.json של Sanity CLI." });
+    }
+
+    const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+    const dataset = process.env.VITE_SANITY_DATASET || "production";
+    const authorId = process.env.SANITY_AUTHOR_ID || "73458909-2928-4308-9c54-983ca1fadb18";
+
+    // Clean slug for draft ID
+    const cleanSlug = article.urlSlug.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
+    const draftId = `drafts.${cleanSlug}`;
+
+    const doc: any = {
+      _id: draftId,
+      _type: "article",
+      title: article.title,
+      slug: { _type: "slug", current: cleanSlug },
+      goldLine: article.goldLine || "",
+      excerpt: article.excerpt || article.metaDescription || "",
+      publishedAt: new Date().toISOString().split("T")[0],
+      author: { _type: "reference", _ref: authorId },
+      authorLine: article.authorLine || "יוסי מדלסי · מומחה לשחרור דפוסים",
+      tags: Array.isArray(article.tags) && article.tags.length ? article.tags : ["הורות"],
+      domain: article.domain || "parents",
+      contentRole: article.contentRole || "supporting",
+      searchIntent: article.searchIntent || "informational",
+      painTags: Array.isArray(article.painTags) ? article.painTags : [],
+      disambiguatingDescription: article.disambiguatingDescription || "",
+      keyTakeaways: article.keyTakeaways || { heading: "מה תלמדו במאמר", items: [] },
+      aiCitation: article.aiCitation || "",
+      aiContext: article.aiContext || "",
+      searchPhrases: Array.isArray(article.searchPhrases) ? article.searchPhrases : [],
+      relatedToMethod: Boolean(article.relatedToMethod),
+      faqItems: (article.faqs || []).map((faq: any, i: number) => ({
+        _key: `faq_${i + 1}`,
+        question: faq.question,
+        answer: faq.answer,
+      })),
+      sources: (article.sources || []).map((src: any, i: number) => ({
+        _key: `src_${i + 1}`,
+        _type: "source",
+        title: src.title,
+        authors: src.authors || "",
+        year: src.year || "",
+        publisher: src.publisher || "",
+        url: src.url || "",
+        note: src.note || "",
+        sourceType: src.sourceType || "academic",
+      })),
+      cta: article.cta || {
+        heading: "רוצים להבין מה קורה עם הילד שלכם?",
+        text: "שיחה אישית אחת יכולה לשנות את כל הדינמיקה בבית ולהחזיר את הרוגע לקשר.",
+        buttonLabel: "אני רוצה להבין מה קורה עם הילד שלי",
+        buttonHref: "https://wa.me/972544580285",
+      },
+      seo: {
+        title: article.metaTitle || article.title,
+        description: article.metaDescription || article.excerpt,
+      },
+      body: convertMarkdownToPortableText(article.content || ""),
+    };
+
+    if (article.insightPlacement) {
+      doc.insightPlacement = {
+        _type: "insightPlacement",
+        domain: article.insightPlacement.domain || "parents",
+        category: article.insightPlacement.category || "הדפוסים והתגובות שלי כהורה",
+        ...(article.insightPlacement.secondary && Array.isArray(article.insightPlacement.secondary)
+          ? {
+              secondary: article.insightPlacement.secondary.map((sec: any, idx: number) => ({
+                _key: `sec_${idx + 1}`,
+                _type: "insightSecondaryPlacement",
+                domain: sec.domain,
+                category: sec.category,
+              })),
+            }
+          : {}),
+      };
+    }
+
+    const mutateUrl = `https://${projectId}.api.sanity.io/v2021-10-21/data/mutate/${dataset}`;
+    const response = await fetch(mutateUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        mutations: [{ createOrReplace: doc }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`שגיאת Sanity (${response.status}): ${errText}`);
+    }
+
+    const resData: any = await response.json();
+    res.json({
+      success: true,
+      draftId,
+      slug: cleanSlug,
+      sanityResult: resData,
+      studioUrl: `https://${projectId}.sanity.studio/desk/article;${draftId}`,
+    });
+  } catch (error: any) {
+    console.error("Error in push-draft to Sanity:", error);
+    res.status(500).json({ error: error.message || "שגיאה בשמירת הטיוטה ב-Sanity" });
+  }
 });
 
 // 7. Live SERP lookup (SerpApi) — raw Google Israel results for a query
@@ -691,6 +986,240 @@ app.post("/api/seo/internal-links", async (req, res) => {
   }
 });
 
+// 9. Cannibalization Guard Router — checks new keyword against all published Sanity articles
+app.post("/api/seo/check-cannibalization", async (req, res) => {
+  try {
+    const { keyword, topic } = req.body;
+    if (!keyword) {
+      return res.status(400).json({ error: "חובה לספק מילת מפתח לבדיקת קניבליזציה" });
+    }
+
+    const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+    const dataset = process.env.VITE_SANITY_DATASET || "production";
+    const groq = '*[_type=="article" && defined(slug.current)]{title,"slug":slug.current,tags,excerpt,goldLine}';
+    const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(groq)}`;
+
+    let articles: any[] = [];
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data: any = await resp.json();
+        articles = data.result || [];
+      }
+    } catch (e) {
+      console.warn("Could not fetch Sanity articles for cannibalization check:", e);
+    }
+
+    const kwTokens = String(keyword)
+      .toLowerCase()
+      .split(/[\s,.-]+/)
+      .filter((t) => t.length > 2);
+
+    const candidates = articles
+      .map((a) => {
+        let matchCount = 0;
+        const text = `${a.title || ""} ${a.excerpt || ""} ${a.goldLine || ""} ${(a.tags || []).join(" ")}`.toLowerCase();
+        kwTokens.forEach((tok) => {
+          if (text.includes(tok)) matchCount += 1;
+        });
+        const similarityScore = kwTokens.length > 0 ? Math.round((matchCount / kwTokens.length) * 100) : 0;
+        return {
+          title: a.title,
+          slug: a.slug,
+          goldLine: a.goldLine,
+          similarityScore,
+        };
+      })
+      .filter((c) => c.similarityScore >= 25)
+      .sort((a, b) => b.similarityScore - a.similarityScore)
+      .slice(0, 4);
+
+    if (candidates.length === 0) {
+      return res.json({
+        hasRisk: false,
+        score: 0,
+        matchedArticles: [],
+        suggestedFocusAngles: [
+          `מיקוד בכאב המיידי וחסר האונים של הורים ביומיום סביב "${keyword}"`,
+          `זווית נוירולוגית של חקר המוח המתבגר (ד"ר דן סיגל)`,
+          `זווית מעשית של תקשורת מקרבת ללא מאבקי כוח (NVC)`,
+        ],
+        recommendation: "לא נמצאה חפיפה משמעותית עם מאמרי האתר. הנושא פנוי לכתיבה כמאמר דגל!",
+      });
+    }
+
+    const client = getAIClient();
+    const prompt = `אתה אסטרטג תוכן ו-SEO של אתר "מצפן הלב" (https://www.heartcompass.co.il).
+נבדקת מילת המפתח: "${keyword}".
+נושא נלווה: "${topic || ""}"
+
+נמצאו המאמרים הקיימים הבאים באתר שעלולים ליצור חפיפה וקניבליזציה בגוגל:
+${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.goldLine || "ללא תקציר"}`).join("\n")}
+
+הערך את רמת הסיכון לקניבליזציה (מ-0 עד 100), הסבר מה כל מאמר קיים כבר מכסה, והצע 3-4 זוויות פוקוס ייחודיות (Differentiated Angles) שיבדלו את המאמר החדש לחלוטין וימנעו תחרות פנימית, בהתאם לדוקטרינת שיטת מ.ס.ע.
+
+החזר אך ורק בפורמט JSON הבא (בלי שום טקסט מחוץ ל-JSON):
+{
+  "hasRisk": true,
+  "score": 65,
+  "recommendation": "המלצה אסטרטגית קצרה ומעשית מה לעשות כדי למנוע קניבליזציה",
+  "matchedArticles": [
+    ${candidates.map((c) => `{ "title": "${c.title}", "slug": "${c.slug}", "similarityScore": ${c.similarityScore}, "reason": "מדוע יש חפיפה ומה המאמר הקיים כבר מכסה" }`).join(",\n")}
+  ],
+  "suggestedFocusAngles": [
+    "זווית ייחודית 1 שתמנע קניבליזציה",
+    "זווית ייחודית 2",
+    "זווית ייחודית 3"
+  ]
+}`;
+
+    const resp = await client.models.generateContent({
+      model: process.env.AUDIT_MODEL || "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an elite SEO strategist specializing in keyword cannibalization prevention and content differentiation for HeartCompass.",
+        responseMimeType: "application/json",
+      },
+    });
+
+    const parsed = parseJSONResponse(resp.text || "{}");
+    res.json(parsed);
+  } catch (err: any) {
+    console.error("Error in check-cannibalization:", err);
+    res.status(500).json({ error: err.message || "שגיאה בבדיקת קניבליזציה" });
+  }
+});
+
+// 10. Content Flywheel (Full 360 Campaign Generator) — Transforms an article into an entire multi-channel organic growth campaign
+app.post("/api/campaign/generate-360", async (req, res) => {
+  try {
+    const { article } = req.body;
+    if (!article || !article.title) {
+      return res.status(400).json({ error: "חובה לספק מאמר לייצור קמפיין 360" });
+    }
+
+    const client = getAIClient();
+    const articleTitle = article.title;
+    const articleSlug = article.urlSlug || "article";
+    const keyword = article.keyword || articleTitle;
+    const content = (article.content || "").slice(0, 5000);
+    const domain = article.domain || "parents";
+
+    const availableTools = [
+      { title: "שאלון אבחון אישי: איזה דפוס פועל בך כשההצפה מתחילה", path: "/guide/coping-style-quiz", domain: "personal", keywords: ["דפוס", "חרדה", "הצפה", "לחץ", "שינוי"] },
+      { title: "מפענח רגעי הפיצוץ: עצירה של 60 שניות לפני שמגיבים (Parenting Pause)", path: "/tools/parent-conflict-pause", domain: "parents", keywords: ["מריבה", "פיצוץ", "התפרצות", "כעס", "ויכוח", "זעם"] },
+      { title: "שאלון אבחון להורים: איזה הורה אתה ברגע הקשה", path: "/guide/parent-type-quiz", domain: "parents", keywords: ["הורה", "הורות", "תגובה", "מתבגר", "שליטה"] },
+      { title: "המדריך לחיבור לערך עצמי יציב: פרפקציוניזם, ריצוי ותדמית", path: "/guide/stable-self-worth-guide", domain: "personal", keywords: ["ערך עצמי", "ריצוי", "ביקורת", "פרפקציוניזם", "בושה"] },
+      { title: "המדריך לשחרור מחשבות יתר ולופים מחשבתיים", path: "/guide/overthinking-release-guide", domain: "personal", keywords: ["מחשבות", "חשיבת יתר", "רומינציה", "ספק", "דאגה"] },
+      { title: "המדריך לשיחה שלא הופכת לחקירה", path: "/guide/teen-conversation-guide", domain: "youth", keywords: ["שיחה", "תקשורת", "חקירה", "מתבגר", "דיבור", "הסתגרות"] },
+      { title: "המדריך להורים — מי הילד שלי בעצם", path: "/guide/parenting-guide-who-is-my-child", domain: "parents", keywords: ["נתק", "הסתגרות", "חדר", "ריחוק", "ניכור"] },
+      { title: "משחק מסע אל מצפן הלב (אימון רגשי לנוער)", path: "/guide/youth-journey-game", domain: "youth", keywords: ["נוער", "משחק", "קלפים", "זהות", "חוסן"] },
+      { title: "הילד אובחן עם הפרעת קשב וריכוז: צעדים ראשונים", path: "/guide/after-adhd-diagnosis-guide", domain: "parents", keywords: ["קשב", "ריכוז", "adhd", "אבחון"] },
+    ];
+
+    let bestTool = availableTools.find((t) => t.keywords.some((k) => keyword.includes(k) || articleTitle.includes(k)));
+    if (!bestTool) {
+      bestTool = domain === "parents" ? availableTools[1] : availableTools[0];
+    }
+
+    const prompt = `אתה מנהל הקמפיינים והתוכן הבכיר של המותג "מצפן הלב" של יוסי מדלסי (https://www.heartcompass.co.il).
+המשימה שלך: להפוך את המאמר הבא לקמפיין צמיחה מלא ב-360 מעלות:
+- כותרת המאמר: "${articleTitle}"
+- מילת מפתח: "${keyword}"
+- סלאג: "${articleSlug}"
+- תקציר: "${article.excerpt || ""}"
+- כלי מותאם באתר: "${bestTool.title}" (${bestTool.path})
+
+תוכן המאמר:
+${content}
+
+חוקי הקול של מצפן הלב — מחייבים, אי-עמידה פוסלת את הפלט:
+- אסור מקפים ארוכים (—).
+- אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם", "בעידן המודרני").
+- אסור CTA קר ("צרו קשר", "אני כאן בשבילכם").
+- סמכותי, סקרן, אנושי וחברי. סיפור קודם, נקודה אחר כך.
+
+דרישות הקמפיין ב-360 מעלות:
+1. ניוזלטר מעוצב לרשימת תפוצה (3 שורות נושא, preview text, סצנה פותחת, גוף המייל, והנעה רכה לקריאת המאמר והתנסות בכלי).
+2. פוסט פייסבוק סיפורי (בגוף שלישי "הוא/היא", עקרון הסוד המשותף, לולאה פתוחה).
+3. פוסט אינסטגרם + מתווה קרוסלה של 5-6 שקופיות.
+4. תסריט Reels / TikTok מלא (Hook של 3 שניות, 5-6 ביטים עם Timecodes, טקסט על המסך, Voiceover, וויזואל, וסאונד).
+
+החזר אך ורק מבנה JSON תואם (ללא שום טקסט עודף מחוץ ל-JSON):
+{
+  "articleId": "${article.id || "art_1"}",
+  "articleTitle": "${articleTitle}",
+  "articleSlug": "${articleSlug}",
+  "suggestedTool": {
+    "title": "${bestTool.title}",
+    "path": "${bestTool.path}",
+    "reason": "מדוע כלי זה הוא ההמשך הטבעי והאבחוני עבור הקורא של מאמר זה"
+  },
+  "newsletter": {
+    "subjectLines": ["נושא 1", "נושא 2", "נושא 3"],
+    "previewText": "טקסט תצוגה מקדימה למייל",
+    "openingScene": "סצנה פותחת מהקליניקה...",
+    "body": "גוף הניוזלטר...",
+    "callToAction": "הנעה רכה לקריאת המאמר המלא והתנסות בכלי"
+  },
+  "socialPosts": [
+    {
+      "platform": "facebook",
+      "hookVariations": ["פתיח 1", "פתיח 2"],
+      "caption": "כיתוב פייסבוק מלא בקול של יוסי...",
+      "hashtags": [],
+      "cta": "הנעה רכה",
+      "visualIdea": "תמונה אותנטית מחיי היומיום"
+    },
+    {
+      "platform": "instagram",
+      "hookVariations": ["פתיח 1", "פתיח 2"],
+      "caption": "כיתוב אינסטגרם נושם...",
+      "hashtags": ["#מצפן_הלב", "#הורות", "#מתבגרים"],
+      "cta": "שמרו את הפוסט או שתפו עם הורה שצריך את זה",
+      "visualIdea": "קרוסלה ויזואלית נקייה"
+    }
+  ],
+  "carousel": [
+    { "slideTitle": "שקופית 1", "slideText": "טקסט קצר..." },
+    { "slideTitle": "שקופית 2", "slideText": "טקסט קצר..." },
+    { "slideTitle": "שקופית 3", "slideText": "טקסט קצר..." },
+    { "slideTitle": "שקופית 4", "slideText": "טקסט קצר..." },
+    { "slideTitle": "שקופית 5", "slideText": "טקסט קצר..." }
+  ],
+  "reels": {
+    "hook": "משפט או פעולה ב-3 השניות הראשונות",
+    "beats": [
+      { "timecode": "0-3s", "onScreenText": "טקסט על המסך", "voiceover": "מה אומרים", "visual": "ויזואל" },
+      { "timecode": "3-8s", "onScreenText": "טקסט", "voiceover": "דיבור", "visual": "ויזואל" },
+      { "timecode": "8-15s", "onScreenText": "טקסט", "voiceover": "דיבור", "visual": "ויזואל" },
+      { "timecode": "15-22s", "onScreenText": "טקסט", "voiceover": "דיבור", "visual": "ויזואל" },
+      { "timecode": "22-30s", "onScreenText": "טקסט", "voiceover": "דיבור", "visual": "ויזואל" }
+    ],
+    "caption": "כיתוב נלווה לרילס בקול של יוסי",
+    "hashtags": ["#מצפןהלב", "#הורות", "#מתבגרים"],
+    "audioIdea": "מוזיקת רקע עמוקה ושקטה ללא מילים",
+    "cta": "קישור למדריך המלא מחכה בפרופיל"
+  }
+}`;
+
+    const resp = await generateWithFallback(client, {
+      model: process.env.ARTICLE_MODEL || "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are the head of content and brand campaigns for HeartCompass. You turn in-depth psychological/parenting articles into cohesive, high-converting 360-degree campaigns in Yossi Medalsi's exact voice.",
+        responseMimeType: "application/json",
+      },
+    });
+
+    const parsed = parseJSONResponse(resp.text || "{}");
+    res.json({ campaign: parsed });
+  } catch (err: any) {
+    console.error("Error in generate-360 campaign:", err);
+    res.status(500).json({ error: friendlyError(err) });
+  }
+});
+
 // =======================
 // SOCIAL SUITE ROUTES
 // =======================
@@ -742,7 +1271,7 @@ app.post("/api/social/generate-posts", async (req, res) => {
       if (!art) return res.status(404).json({ error: "המאמר לא נמצא ב-Sanity" });
       sourceTitle = art.title || sourceTitle;
       sourceBody = art.text || art.excerpt || sourceBody;
-      sourceUrl = `https://heartcompass.vercel.app/articles/${slug}`;
+      sourceUrl = `https://www.heartcompass.co.il/articles/${slug}`;
     }
 
     if (!sourceTitle && !sourceBody) {
@@ -758,7 +1287,7 @@ app.post("/api/social/generate-posts", async (req, res) => {
     const wantsReels = wanted.includes("reels");
     const captionPlatforms = wanted.filter((p) => p !== "reels");
 
-    const prompt = `אתה אסטרטג תוכן לרשתות חברתיות של המותג "מצפן הלב" של יוסי מדלסי (אימון רגשי תודעתי לנוער, הורים וזוגות).
+    const prompt = `אתה אסטרטג תוכן לרשתות חברתיות של המותג "מצפן הלב" של יוסי מדלסי (אימון רגשי תודעתי לנוער, הורים וזוגות - https://www.heartcompass.co.il).
 המשימה: להפוך את חומר המקור הבא לפוסטים מנצחים ל${platformLabel}.
 
 כותרת/נושא המקור: ${sourceTitle || "ללא כותרת"}
@@ -772,7 +1301,7 @@ ${(sourceBody || "").slice(0, 6000)}
 
 כללי פסילה מוחלטים:
 - אסור מקפים ארוכים (—) בשום צורה.
-- אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
+- אסור פתיחות נוסחתיות ("רבים מאיתנו", "כולנו מכירים", "האם גם אתם", "בעידן המודרני").
 - אסור רשימות בפוסט.
 - אסור CTA קר ("צור קשר", "הזמן פגישה", "אני כאן בשבילך").
 - אסור הבטחת תוצאה ("תשתחרר", "תפסיק לריב"). מבטיחים הבנה, לא תוצאה.
@@ -826,7 +1355,7 @@ ${(sourceBody || "").slice(0, 6000)}
 חובה: צור אובייקט post נפרד לכל פלטפורמת כיתוב מבוקשת (${captionPlatforms.join(", ") || "אין"}). ${wantsReels ? "בנוסף, מלא את האובייקט reels עם סקריפט וידאו מלא (5-7 ביטים עם timecode, טקסט על המסך, voiceover וויזואל)." : "החזר reels כ-null."} אם אינסטגרם מבוקש, מלא carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.5-flash",
+      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction:
@@ -884,7 +1413,7 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
@@ -949,7 +1478,7 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
 כל הטקסט בעברית מקצועית.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.COMPETITOR_MODEL || "gemini-3.1-flash-lite",
+      model: model || process.env.COMPETITOR_MODEL || "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
@@ -985,7 +1514,7 @@ app.post("/api/social/chat", async (req, res) => {
     if (useSearch) config.tools = [{ googleSearch: {} }];
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.1-flash-lite",
+      model: model || process.env.SOCIAL_MODEL || "gemini-2.5-flash",
       contents,
       config,
     });

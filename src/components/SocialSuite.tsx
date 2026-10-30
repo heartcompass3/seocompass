@@ -15,7 +15,7 @@ export default function SocialSuite() {
   const [tab, setTab] = useState<SocialTab>('posts');
   const [articles, setArticles] = useState<SocialArticleRef[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState('gemini-3.5-flash');
+  const [model, setModel] = useState('gemini-2.5-flash');
 
   // Post generator
   const [postsLoading, setPostsLoading] = useState(false);
@@ -97,8 +97,9 @@ export default function SocialSuite() {
           onChange={(e) => setModel(e.target.value)}
           className="bg-white text-slate-700 text-xs py-1.5 px-3 border border-slate-200 rounded-lg outline-none focus:border-blue-500"
         >
-          <option value="gemini-3.5-flash">איכותי · 3.5 Flash (מומלץ לפוסטים)</option>
-          <option value="gemini-3.1-flash-lite">חסכוני · Flash Lite (מכסה גבוהה)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (מומלץ לפוסטים, רילס וקרוסלות)</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro (עומק ואסטרטגיה)</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash (חסכוני במכסה ומהיר)</option>
         </select>
       </div>
 

@@ -47,6 +47,32 @@ export const SANITY_ARTICLE_TAGS = [
 
 export type SanityArticleTag = typeof SANITY_ARTICLE_TAGS[number];
 
+export type ContentDomain = 'parents' | 'youth' | 'personal' | 'relationships';
+export type ContentRole = 'supporting' | 'pillar' | 'money';
+
+export interface AcademicSource {
+  title: string;
+  authors?: string;
+  year?: string;
+  publisher?: string;
+  url?: string;
+  note?: string;
+  sourceType?: 'academic' | 'book' | 'clinical';
+}
+
+export interface ArticleCTA {
+  heading: string;
+  text: string;
+  buttonLabel: string;
+  buttonHref: string;
+}
+
+export interface InsightPlacement {
+  domain: ContentDomain;
+  category: string;
+  secondary?: Array<{ domain: ContentDomain; category: string }>;
+}
+
 export interface GeneratedArticle {
   id: string;
   keyword: string;
@@ -54,6 +80,7 @@ export interface GeneratedArticle {
   metaTitle: string;
   metaDescription: string;
   urlSlug: string;
+  slug?: string;
   wordCount: number;
   outline: {
     sectionTitle: string;
@@ -67,16 +94,36 @@ export interface GeneratedArticle {
   seoTips: string[];
 
   // --- Fields aligned with the Sanity `article` document schema ---
-  // These are produced so each Sanity field can be copied manually 1:1.
-  // Optional so older articles loaded from Drive/Firestore still type-check.
+  // These are produced so each Sanity field can be copied manually 1:1 or pushed via API.
   goldLine?: string;    // Sanity: goldLine  — שורת מסגור (זהב) / תת-כותרת המנגנון
   excerpt?: string;     // Sanity: excerpt   — תקציר ענייני (יושב ב-meta description ובכרטיס)
   tags?: SanityArticleTag[]; // Sanity: tags  — תחומים, מהרשימה הסגורה בלבד
-  authorLine?: string;  // Sanity: authorLine — שורת סמכות
+  authorLine?: string;  // Sanity: authorLine — שורת סמכות ("יוסי מדלסי · מומחה לשחרור דפוסים")
   imageAlt?: string;    // Sanity: mainImage.alt — טקסט חלופי לתמונה הראשית
   aiCitation?: string;  // משפט הגדרה עצמאי שמנוע AI יכול לחלץ (GEO/AEO)
   bodyHtml?: string;    // גוף המאמר כ-HTML RTL מוכן להדבקה לעורך של Sanity
 
+  // --- Extended 2026 GEO & Sanity Growth Fields ---
+  domain?: ContentDomain;
+  contentRole?: ContentRole;
+  searchIntent?: SearchIntentType;
+  painTags?: string[];
+  disambiguatingDescription?: string;
+  keyTakeaways?: {
+    heading: string;
+    items: string[];
+  };
+  insightPlacement?: InsightPlacement;
+  aiContext?: string;
+  searchPhrases?: string[];
+  relatedToMethod?: boolean;
+  sources?: AcademicSource[];
+  cta?: ArticleCTA;
+  jsonLdSchema?: Record<string, any>; // Generated Schema.org (Article, FAQ, Person)
+
+  // Status flags
+  pushedToSanity?: boolean;
+  sanityDraftId?: string;
   savedDriveFileId?: string;
   savedDriveFileUrl?: string;
 }
@@ -181,4 +228,49 @@ export interface SocialCompetitor {
 export interface SocialChatMessage {
   role: 'user' | 'model';
   message: string;
+}
+
+// =======================
+// Cannibalization Guard & 360 Campaign types
+// =======================
+
+export interface CannibalizationMatch {
+  title: string;
+  slug: string;
+  goldLine?: string;
+  similarityScore: number;
+  reason: string;
+}
+
+export interface CannibalizationCheckResult {
+  hasRisk: boolean;
+  score: number;
+  matchedArticles: CannibalizationMatch[];
+  suggestedFocusAngles: string[];
+  recommendation: string;
+}
+
+export interface CampaignNewsletter {
+  subjectLines: string[];
+  previewText: string;
+  openingScene: string;
+  body: string;
+  callToAction: string;
+}
+
+export interface SuggestedToolMatch {
+  title: string;
+  path: string;
+  reason: string;
+}
+
+export interface Campaign360 {
+  articleId: string;
+  articleTitle: string;
+  articleSlug: string;
+  suggestedTool: SuggestedToolMatch;
+  newsletter: CampaignNewsletter;
+  socialPosts: SocialPost[];
+  carousel: CarouselSlide[];
+  reels: ReelsScript;
 }

@@ -84,26 +84,26 @@ const INITIAL_COMPETITORS: CompetitorAnalysis[] = [
     contentStrategy: "פוסטים שבועיים קצרים סביב שאלות הורים, המלצות של מטופלים, ופודקאסט שבועי קצר."
   },
   {
-    competitorName: "המצפן הרגשי (האתר שלך)",
-    websiteUrl: "heartcompass.vercel.app",
-    domainAuthority: 18,
-    estimatedTraffic: "2K/month",
+    competitorName: "מצפן הלב - יוסי מדלסי (האתר שלך)",
+    websiteUrl: "www.heartcompass.co.il",
+    domainAuthority: 22,
+    estimatedTraffic: "3K/month",
     trafficShare: 20,
-    mainKeywords: ["המצפן הרגשי", "אימון רגשי לנוער", "הדרכת הורים", "הדרכת הורים לגיל ההתבגרות", "אימון רגשי מתבגרים"],
-    strengths: ["עיצוב ייחודי, נקי ומודרני המעניק ביטחון ואמפתיה מהירה", "מיקוד רגשי מדויק שפונה גם להורה וגם לנוער בגובה העיניים", "ציון מהירות וביצועים מעולים בארכיטקטורת Vercel"],
-    weaknesses: ["דומיין צעיר יחסית הדורש הגדלת סמכות (DA)", "כמות מצומצמת של קישורים נכנסים (Backlinks) איכותיים בישראל", "היעדר כתבות עומק מותאמות SEO המשתלטות על ביטויי סל רחבים"],
+    mainKeywords: ["מצפן הלב", "יוסי מדלסי", "אימון רגשי לנוער", "הדרכת הורים למתבגרים", "שחרור דפוסים"],
+    strengths: ["עיצוב ייחודי, נקי ומודרני המעניק ביטחון ואמפתיה מהירה", "מיקוד רגשי מדויק שפונה גם להורה וגם לנוער בגובה העיניים מתוך שיטת מ.ס.ע", "ציון מהירות וביצועים מעולים בארכיטקטורה מודרנית"],
+    weaknesses: ["דומיין צעיר יחסית הדורש הגדלת סמכות (DA)", "כמות מצומצמת של קישורים נכנסים (Backlinks) איכותיים בישראל", "היעדר כתבות עומק מותאמות SEO/GEO המשתלטות על ביטויי סל רחבים"],
     backlinkProfile: {
       strength: "Low",
-      estimatedCount: 120,
-      anchorTextStrategy: "אנקור מותגי בעיקר ('המצפן הרגשי', 'האתר של המצפן הרגשי')"
+      estimatedCount: 150,
+      anchorTextStrategy: "אנקור מותגי בעיקר ('מצפן הלב', 'יוסי מדלסי', 'שיטת מסע')"
     },
     onPageSEOStatus: {
-      score: 86,
+      score: 88,
       mobileFriendly: true,
       pageSpeed: "Fast",
-      missingMetaTags: ["תג Schema לא מוגדר במלואו", "חסרות כתבות עמוד תווך (Pillar Content)"]
+      missingMetaTags: ["תג Schema לא מוגדר במלואו בכל הדפים", "נדרשת הרחבת כתבות עמוד תווך (Pillar Content)"]
     },
-    contentStrategy: "בלוג אישי ורגיש, אך דורש אסטרטגיה ועץ מילות מפתח מובנה לקבוצות ביטויי חיפוש אטרקטיביים עם קושי נמוך."
+    contentStrategy: "תכני עומק מבוססי שיטת מ.ס.ע, פירוק מנגנוני הנפש והאוטוריטות, עם עץ מילות מפתח מובנה לקבוצות ביטויי חיפוש אטרקטיביים עם קושי נמוך."
   }
 ];
 
@@ -175,7 +175,7 @@ const INITIAL_KEYWORDS: KeywordResearchResult[] = [
     suggestedAction: "מאמר קצר עם טבלת מעקב להורים 'מתי מדובר בשינוי נורמטיבי ומתי נדרשת הכוונה חיצונית'."
   },
   {
-    keyword: "המצפן הרגשי הדרכה ואימון",
+    keyword: "מצפן הלב הדרכה ואימון",
     searchVolume: 350,
     difficulty: 5,
     cpc: 0.50,
@@ -206,7 +206,7 @@ export default function App() {
   const [suite, setSuite] = useState<'seo' | 'social'>('seo');
 
   // Manual integration connection status (which slots are wired)
-  const [integrations, setIntegrations] = useState<{ gemini: boolean; serpapi: boolean; searchConsole: boolean } | null>(null);
+  const [integrations, setIntegrations] = useState<{ gemini: boolean; serpapi: boolean; searchConsole: boolean; sanity?: boolean } | null>(null);
   
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -513,6 +513,7 @@ export default function App() {
             {[
               { key: 'gemini', label: 'Gemini', on: integrations?.gemini },
               { key: 'serpapi', label: 'SerpApi', on: integrations?.serpapi },
+              { key: 'sanity', label: 'Sanity CMS', on: integrations?.sanity },
               { key: 'searchConsole', label: 'Search Console', on: integrations?.searchConsole },
             ].map((i) => (
               <span

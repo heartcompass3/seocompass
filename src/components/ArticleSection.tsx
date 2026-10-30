@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { GeneratedArticle } from '../types';
+import { GeneratedArticle, CannibalizationCheckResult, Campaign360 } from '../types';
 import { User } from 'firebase/auth';
-import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X, Copy, ClipboardCheck, Network } from 'lucide-react';
+import { Sparkles, FileText, CheckCircle, Save, HelpCircle, Eye, AlertCircle, RefreshCw, Trash2, Cloud, FileCode, Wand2, Gauge, Check, X, Copy, ClipboardCheck, Network, ShieldAlert, ShieldCheck, Zap, Share2, Video, Mail, ExternalLink, Layers, ArrowRight } from 'lucide-react';
 
 interface ArticleSectionProps {
   selectedKeyword: string;
@@ -166,7 +166,7 @@ function buildJsonLd(article: GeneratedArticle): string {
 }
 
 // Base URL for internal article links on the live site.
-const ARTICLE_BASE_URL = 'https://heartcompass.vercel.app/articles/';
+const ARTICLE_BASE_URL = 'https://www.heartcompass.co.il/articles/';
 
 // Trigger a client-side file download (no server / API involved).
 function downloadFile(filename: string, content: string, mime: string) {
@@ -193,11 +193,11 @@ export default function ArticleSection({
 }: ArticleSectionProps) {
   const [keyword, setKeyword] = useState('');
   const [audience, setAudience] = useState('');
-  const [tone, setTone] = useState('Professional');
+  const [tone, setTone] = useState('Professional and informative');
   const [additionalKeywords, setAdditionalKeywords] = useState('');
   const [guidelines, setGuidelines] = useState('');
   const [useSearch, setUseSearch] = useState(false);
-  const [genModel, setGenModel] = useState('gemini-3.5-flash');
+  const [genModel, setGenModel] = useState('gemini-2.5-flash');
 
   // Internal-link suggestions from Sanity
   const [linkSuggestions, setLinkSuggestions] = useState<Array<{ title: string; slug: string; tags: string[]; score: number }>>([]);
@@ -209,9 +209,25 @@ export default function ArticleSection({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
 
+  // Direct Sanity Push state
+  const [pushingToSanity, setPushingToSanity] = useState(false);
+  const [sanityPushResult, setSanityPushResult] = useState<{ draftId: string; studioUrl: string } | null>(null);
+  const [sanityPushError, setSanityPushError] = useState('');
+
+  // Cannibalization Guard States
+  const [cannibalizationLoading, setCannibalizationLoading] = useState(false);
+  const [cannibalizationResult, setCannibalizationResult] = useState<CannibalizationCheckResult | null>(null);
+  const [cannibalizationError, setCannibalizationError] = useState('');
+
+  // 360 Campaign States
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignResult, setCampaignResult] = useState<Campaign360 | null>(null);
+  const [campaignError, setCampaignError] = useState('');
+  const [campaignTab, setCampaignTab] = useState<'reels' | 'facebook' | 'instagram' | 'newsletter' | 'tool'>('reels');
+
   // AI Editor and Auditor States
   const [editPrompt, setEditPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
   const [useSearchForEdit, setUseSearchForEdit] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
   const [editError, setEditError] = useState('');
@@ -233,6 +249,8 @@ export default function ArticleSection({
     setEditSuccess(false);
     setEditError('');
     setAuditResult(null);
+    setCampaignResult(null);
+    setCampaignError('');
   }, [generatedArticle]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -419,6 +437,78 @@ ${list}
     }
   };
 
+  const handlePushToSanity = async () => {
+    if (!generatedArticle) return;
+    setPushingToSanity(true);
+    setSanityPushError('');
+    setSanityPushResult(null);
+    try {
+      const res = await fetch('/api/sanity/push-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ article: generatedArticle }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'שגיאה בשמירת הטיוטה ב-Sanity');
+      }
+      setSanityPushResult({ draftId: data.draftId, studioUrl: data.studioUrl });
+      setGeneratedArticle({ ...generatedArticle, pushedToSanity: true, sanityDraftId: data.draftId });
+    } catch (err: any) {
+      setSanityPushError(err.message || 'העלאה ל-Sanity נכשלה');
+    } finally {
+      setPushingToSanity(false);
+    }
+  };
+
+  const handleCheckCannibalization = async () => {
+    if (!keyword.trim()) return;
+    setCannibalizationLoading(true);
+    setCannibalizationError('');
+    try {
+      const res = await fetch('/api/seo/check-cannibalization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: keyword.trim(),
+          existingSlug: generatedArticle?.urlSlug || generatedArticle?.slug,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'בדיקת קניבליזציה נכשלה');
+      setCannibalizationResult(data);
+    } catch (err: any) {
+      console.error(err);
+      setCannibalizationError(err.message || 'שגיאת תקשורת בבדיקת קניבליזציה');
+    } finally {
+      setCannibalizationLoading(false);
+    }
+  };
+
+  const handleGenerate360Campaign = async () => {
+    if (!generatedArticle) return;
+    setCampaignLoading(true);
+    setCampaignError('');
+    try {
+      const res = await fetch('/api/campaign/generate-360', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          article: generatedArticle,
+          selectedModel: genModel || selectedModel,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'יצירת קמפיין 360 נכשלה');
+      setCampaignResult(data.campaign);
+    } catch (err: any) {
+      console.error(err);
+      setCampaignError(err.message || 'שגיאה ביצירת קמפיין 360');
+    } finally {
+      setCampaignLoading(false);
+    }
+  };
+
   return (
     <div id="article-generator-section" className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -445,6 +535,133 @@ ${list}
                   id="article-keyword"
                 />
                 <span className="text-[10px] text-slate-400 mt-1">מילת המפתח תוטמע בכותרת, בכותרות המשנה, ובפסקה הראשונה</span>
+
+                {/* Cannibalization Guard Action & Feedback */}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCheckCannibalization}
+                    disabled={cannibalizationLoading || !keyword.trim()}
+                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                    title="בדוק האם מילת מפתח זו כבר מכוסה במאמר קיים באתר ותמנע פגיעה בדירוגים"
+                  >
+                    {cannibalizationLoading ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>בודק מול 169+ מאמרים...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>בדוק קניבליזציה מול האתר</span>
+                      </>
+                    )}
+                  </button>
+                  {cannibalizationResult && (
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      נבדקו {cannibalizationResult.articlesChecked} מאמרים
+                    </span>
+                  )}
+                </div>
+
+                {cannibalizationError && (
+                  <div className="mt-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-[11px] text-right">
+                    {cannibalizationError}
+                  </div>
+                )}
+
+                {cannibalizationResult && (
+                  <div className={`mt-2 p-3 rounded-xl border text-xs space-y-2.5 transition-all text-right ${
+                    cannibalizationResult.overlapDetected
+                      ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  }`}>
+                    <div className="flex items-center justify-between gap-2 flex-row-reverse">
+                      <div className="flex items-center gap-1.5 font-bold flex-row-reverse">
+                        {cannibalizationResult.overlapDetected ? (
+                          <>
+                            <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>אזהרת קניבליזציה</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>נקי מקניבליזציה!</span>
+                          </>
+                        )}
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                        cannibalizationResult.overlapDetected ? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
+                      }`}>
+                        ציון חפיפה: {cannibalizationResult.overlapScore}%
+                      </span>
+                    </div>
+
+                    {cannibalizationResult.overlapDetected ? (
+                      <>
+                        <p className="text-[11px] leading-relaxed text-amber-900">
+                          {cannibalizationResult.recommendation}
+                        </p>
+
+                        {cannibalizationResult.conflictingArticles && cannibalizationResult.conflictingArticles.length > 0 && (
+                          <div className="space-y-1.5 pt-1 border-t border-amber-200">
+                            <span className="text-[10px] font-bold text-amber-800 block">מאמרים קיימים עם חפיפה:</span>
+                            {cannibalizationResult.conflictingArticles.map((art, idx) => (
+                              <div key={idx} className="bg-white/80 p-2 rounded-lg border border-amber-200 text-[11px] space-y-1">
+                                <div className="flex items-center justify-between gap-2 flex-row-reverse">
+                                  <a
+                                    href={`https://www.heartcompass.co.il/articles/${art.slug}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-bold text-blue-700 hover:underline flex items-center gap-1 flex-row-reverse"
+                                  >
+                                    <span>{art.title}</span>
+                                    <ExternalLink className="w-3 h-3 text-blue-500 shrink-0" />
+                                  </a>
+                                  <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
+                                    {art.matchedReason}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {cannibalizationResult.suggestedFocusAngles && cannibalizationResult.suggestedFocusAngles.length > 0 && (
+                          <div className="space-y-1.5 pt-1 border-t border-amber-200">
+                            <span className="text-[10px] font-bold text-amber-900 block">
+                              זוויות מומלצות לבידול (לחץ להטמעה בהנחיות):
+                            </span>
+                            <div className="flex flex-wrap gap-1.5 justify-end">
+                              {cannibalizationResult.suggestedFocusAngles.map((angle, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => {
+                                    setGuidelines((prev) =>
+                                      prev
+                                        ? `${prev}\n• זווית מבדלת: ${angle}`
+                                        : `• זווית מבדלת: ${angle}`
+                                    );
+                                  }}
+                                  className="text-[10px] bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg px-2 py-1 transition-all cursor-pointer text-right flex items-center gap-1"
+                                  title="לחץ להוספת זווית זו להנחיות הכתיבה"
+                                >
+                                  <span>+</span>
+                                  <span>{angle}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[11px] leading-relaxed text-emerald-800">
+                        {cannibalizationResult.recommendation || 'מילת המפתח מקורית ולא מתחרה באף אחד מ-169 המאמרים הקיימים באתר. בטוח לייצור!'}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col">
@@ -482,12 +699,12 @@ ${list}
                   className="w-full text-right bg-slate-50 hover:bg-slate-100/50 focus:bg-white text-slate-800 text-sm px-3 py-2 rounded-xl border border-slate-200 focus:border-blue-500 outline-none transition-all"
                   id="article-gen-model"
                 >
-                  <option value="gemini-3.5-flash">gemini-3.5-flash (מהיר וכללי)</option>
-                  <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (עומק ומבנה מורכב)</option>
-                  <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (מהיר וחסכוני)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (מומלץ · מהיר, חכם ומעודכן)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (עומק חשיבה, כתיבה מורכבת ומחקר)</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash (חסכוני ומהיר)</option>
                 </select>
-                {genModel === 'gemini-3.1-pro-preview' && (
-                  <span className="text-[10px] text-amber-600 mt-1">מודל מתקדם — ודא שמפתחות החיוב מופעלים בחשבון.</span>
+                {genModel === 'gemini-2.5-pro' && (
+                  <span className="text-[10px] text-amber-600 mt-1">מודל עומק מתקדם — מתאים למאמרי עמוד תווך (Pillars) מקיפים.</span>
                 )}
               </div>
 
@@ -641,8 +858,68 @@ ${list}
                   <h4 className="font-display font-bold text-slate-800 text-sm">{generatedArticle.title}</h4>
                 </div>
                 
-                {/* Google Drive Cloud saving action button */}
+                {/* Cloud saving & Sanity push action buttons */}
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* 360 Campaign Generator button */}
+                  <button
+                    onClick={handleGenerate360Campaign}
+                    disabled={campaignLoading}
+                    id="btn-generate-360-campaign"
+                    className={`px-4 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+                      campaignResult
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                        : 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white hover:from-amber-600 hover:to-orange-600'
+                    }`}
+                    title="הפוך את המאמר לגלגל תנופה 360°: רילס, פייסבוק, קרוסלת אינסטגרם, ניוזלטר וכלי מותאם באתר"
+                  >
+                    {campaignLoading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent"></div>
+                        <span>מייצר גלגל תנופה 360°...</span>
+                      </>
+                    ) : campaignResult ? (
+                      <>
+                        <Zap className="w-3.5 h-3.5 text-amber-600" />
+                        <span>קמפיין 360° מוכן ✓</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>גלגל תנופה 360°</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Push to Sanity CMS Draft button */}
+                  <button
+                    onClick={handlePushToSanity}
+                    disabled={pushingToSanity}
+                    id="btn-push-to-sanity"
+                    className={`px-4 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+                      sanityPushResult || generatedArticle.pushedToSanity
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : 'bg-gradient-to-r from-red-600 to-rose-600 text-white hover:from-red-700 hover:to-rose-700'
+                    }`}
+                    title="שמירה ישירה של המאמר כטיוטה ב-Sanity CMS"
+                  >
+                    {pushingToSanity ? (
+                      <>
+                        <div className="animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent"></div>
+                        <span>מעלה טיוטה לסאניטי...</span>
+                      </>
+                    ) : sanityPushResult || generatedArticle.pushedToSanity ? (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>טיוטה בסאניטי ✓</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>שלח כטיוטה ל-Sanity</span>
+                      </>
+                    )}
+                  </button>
+
                   {generatedArticle.savedDriveFileUrl && (
                     <a
                       href={generatedArticle.savedDriveFileUrl}
@@ -685,6 +962,40 @@ ${list}
                 </div>
               </div>
 
+              {/* Sanity Direct Push status notifications */}
+              {sanityPushResult && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <h5 className="text-emerald-800 text-xs font-bold">המאמר הועלה בהצלחה כטיוטה ב-Sanity CMS!</h5>
+                      <p className="text-emerald-700 text-[11px] mt-0.5">
+                        מזהה מסמך: <span dir="ltr" className="font-mono bg-emerald-100 px-1 py-0.5 rounded text-emerald-900">{sanityPushResult.draftId}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <a
+                    href={sanityPushResult.studioUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition-all flex items-center gap-1 self-end sm:self-auto"
+                  >
+                    <span>פתח ב-Sanity Studio</span>
+                    <Eye className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+
+              {sanityPushError && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 animate-fade-in">
+                  <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5 shrink-0" />
+                  <div>
+                    <h5 className="text-rose-800 text-xs font-bold">העלאה ל-Sanity נכשלה</h5>
+                    <p className="text-rose-700 text-[11px] mt-1">{sanityPushError}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Status notifications of saving results */}
               {saveSuccess && (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3">
@@ -716,28 +1027,315 @@ ${list}
               {/* Client-side quality checks — brand voice + SEO lengths */}
               <QualityChecks article={generatedArticle} />
 
+              {/* 360° Campaign Generator Flywheel Block */}
+              {campaignError && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 animate-fade-in text-right">
+                  <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5 shrink-0" />
+                  <div>
+                    <h5 className="text-rose-800 text-xs font-bold">יצירת קמפיין 360 נכשלה</h5>
+                    <p className="text-rose-700 text-[11px] mt-1">{campaignError}</p>
+                  </div>
+                </div>
+              )}
+
+              {campaignResult && (
+                <div className="bg-gradient-to-br from-amber-50/70 via-white to-orange-50/60 rounded-2xl border border-amber-300 p-5 shadow-xs space-y-4 text-right animate-fade-in">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-amber-200/70 pb-3 gap-3 flex-row-reverse">
+                    <div className="flex items-center gap-2 flex-row-reverse justify-end">
+                      <Zap className="w-5 h-5 text-amber-500 shrink-0" />
+                      <div>
+                        <h4 className="font-display font-bold text-slate-900 text-sm">גלגל תנופה 360° (Content Flywheel)</h4>
+                        <p className="text-[10px] text-slate-500">קמפיין מרובה ערוצים שממיר קוראים מתוך המאמר, יוצר נוכחות סרטונית ומניע כלים באתר</p>
+                      </div>
+                    </div>
+                    {campaignResult.suggestedTool && (
+                      <a
+                        href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 bg-amber-100/90 hover:bg-amber-200 text-amber-900 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-amber-300 transition-all self-start sm:self-auto flex-row-reverse"
+                      >
+                        <span>כלי מותאם: {campaignResult.suggestedTool.name}</span>
+                        <ExternalLink className="w-3 h-3 text-amber-700 shrink-0" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Campaign Tabs */}
+                  <div className="flex flex-wrap items-center gap-1.5 bg-slate-100/80 p-1.5 rounded-xl border border-slate-200/60 justify-end flex-row-reverse">
+                    <button
+                      type="button"
+                      onClick={() => setCampaignTab('reels')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer flex-row-reverse ${
+                        campaignTab === 'reels'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Video className="w-3.5 h-3.5 text-purple-600" />
+                      <span>תסריט Reels / TikTok</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCampaignTab('facebook')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer flex-row-reverse ${
+                        campaignTab === 'facebook'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Share2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span>פוסט פייסבוק</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCampaignTab('instagram')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer flex-row-reverse ${
+                        campaignTab === 'instagram'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5 text-pink-600" />
+                      <span>קרוסלת אינסטגרם</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCampaignTab('newsletter')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer flex-row-reverse ${
+                        campaignTab === 'newsletter'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Mail className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>ניוזלטר אישי</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCampaignTab('tool')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer flex-row-reverse ${
+                        campaignTab === 'tool'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-amber-600" />
+                      <span>כלי אינטראקטיבי מותאם</span>
+                    </button>
+                  </div>
+
+                  {/* TAB 1: REELS SCRIPT */}
+                  {campaignTab === 'reels' && (
+                    <div className="space-y-4 pt-1">
+                      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-row-reverse">
+                          <span className="text-xs font-bold text-slate-700">הוק 3 שניות (Visual + Verbal)</span>
+                          <span className="text-[10px] font-mono bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-bold">3s Hook</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                          <div className="bg-purple-50/50 p-2.5 rounded-lg border border-purple-100 text-right">
+                            <span className="text-[10px] font-bold text-purple-900 block mb-1">פתיחה מילולית:</span>
+                            <p className="font-semibold text-slate-800">{campaignResult.reelsScript.hook3s}</p>
+                          </div>
+                          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-right">
+                            <span className="text-[10px] font-bold text-slate-600 block mb-1">מה רואים על המסך:</span>
+                            <p className="text-slate-700">{campaignResult.reelsScript.visualHook}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Beats Table */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-row-reverse">
+                          <span className="text-xs font-bold text-slate-700">פירוק לפי ביטים (Storyboard Beats)</span>
+                          <span className="text-[10px] text-slate-400">אורך משוער: 45-60 שניות</span>
+                        </div>
+                        <div className="space-y-2">
+                          {campaignResult.reelsScript.beats?.map((beat, bIdx) => (
+                            <div key={bIdx} className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/80 text-xs space-y-1.5 transition-all text-right">
+                              <div className="flex items-center justify-between gap-2 flex-row-reverse">
+                                <span className="font-mono text-[10px] font-bold bg-slate-200 text-slate-800 px-2 py-0.5 rounded">
+                                  {beat.timecode}
+                                </span>
+                                <span className="text-[10px] font-bold text-purple-700">
+                                  טקסט על מסך: {beat.textOnScreen}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] pt-1">
+                                <div className="text-right">
+                                  <span className="text-[9px] text-slate-400 block">וידאו / פעולה:</span>
+                                  <p className="text-slate-700">{beat.visual}</p>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-[9px] text-slate-400 block">דיבוב (Voiceover):</span>
+                                  <p className="text-slate-900 font-medium">{beat.voiceover}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                        <CopyField label="קריאה לפעולה בסרטון (CTA)" sanityField="cta" value={campaignResult.reelsScript.callToAction} />
+                        <CopyField label="סאונד ומוזיקה מומלצת" sanityField="audio" value={campaignResult.reelsScript.audioSuggestion} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 2: FACEBOOK POST */}
+                  {campaignTab === 'facebook' && (
+                    <div className="space-y-4 pt-1">
+                      {campaignResult.facebookPost.hookVariations && (
+                        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-right">
+                          <span className="text-xs font-bold text-slate-700 block">3 וריאציות הוק לבדיקת A/B:</span>
+                          <div className="space-y-1.5">
+                            {campaignResult.facebookPost.hookVariations.map((hook, hIdx) => (
+                              <div key={hIdx} className="bg-blue-50/50 border border-blue-100 p-2.5 rounded-lg text-xs font-semibold text-blue-950 flex items-center gap-2 flex-row-reverse justify-end">
+                                <span>{hook}</span>
+                                <span className="text-[10px] font-mono bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold shrink-0">#{hIdx + 1}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <CopyField label="פוסט מלא לפייסבוק (סטורי-טלינג בגובה העיניים)" sanityField="facebookPost" value={campaignResult.facebookPost.body} multiline />
+                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.facebookPost.cta} />
+                    </div>
+                  )}
+
+                  {/* TAB 3: INSTAGRAM CAROUSEL */}
+                  {campaignTab === 'instagram' && (
+                    <div className="space-y-4 pt-1">
+                      <CopyField label="טקסט לפוסט (Caption)" sanityField="caption" value={campaignResult.instagramCarousel.caption} multiline />
+                      
+                      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-right">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-row-reverse">
+                          <span className="text-xs font-bold text-slate-700">שקופיות הקרוסלה ({campaignResult.instagramCarousel.slides?.length || 0})</span>
+                          <span className="text-[10px] text-pink-600 font-bold">פורמט 1:1 או 4:5 ל-Canva</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {campaignResult.instagramCarousel.slides?.map((slide) => (
+                            <div key={slide.slideNumber} className="p-3 bg-gradient-to-br from-pink-50/40 via-white to-purple-50/40 rounded-xl border border-pink-200/70 text-xs space-y-2 text-right">
+                              <div className="flex items-center justify-between flex-row-reverse">
+                                <span className="font-bold text-pink-900">שקופית #{slide.slideNumber}</span>
+                                <span className="text-[9px] font-mono bg-pink-100 text-pink-800 px-1.5 py-0.5 rounded">Slide</span>
+                              </div>
+                              <h5 className="font-bold text-slate-900 text-xs">{slide.headline}</h5>
+                              <p className="text-[11px] text-slate-700 leading-relaxed whitespace-pre-wrap">{slide.body}</p>
+                              {slide.visualDescription && (
+                                <div className="text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                  <span className="font-bold block text-slate-600 mb-0.5">ויז'ואל מומלץ:</span>
+                                  {slide.visualDescription}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 4: NEWSLETTER */}
+                  {campaignTab === 'newsletter' && (
+                    <div className="space-y-4 pt-1">
+                      {campaignResult.newsletter.subjectLineOptions && (
+                        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-right">
+                          <span className="text-xs font-bold text-slate-700 block">שורות נושא לבדיקת פתיחה (Subject Lines):</span>
+                          <div className="space-y-1.5">
+                            {campaignResult.newsletter.subjectLineOptions.map((subj, sIdx) => (
+                              <div key={sIdx} className="bg-emerald-50/50 border border-emerald-100 p-2.5 rounded-lg text-xs font-semibold text-emerald-950 flex items-center gap-2 flex-row-reverse justify-end">
+                                <span>{subj}</span>
+                                <span className="text-[10px] font-mono bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded font-bold shrink-0">#{sIdx + 1}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <CopyField label="טקסט תצוגה מקדימה (Preview Text)" sanityField="previewText" value={campaignResult.newsletter.previewText} />
+                      <CopyField label="תמונת קליניקה / פתיחה אישית" sanityField="openingStory" value={campaignResult.newsletter.openingStory} multiline />
+                      <CopyField label="גוף הניוזלטר המלא" sanityField="body" value={campaignResult.newsletter.body} multiline />
+                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.newsletter.callToAction} />
+                    </div>
+                  )}
+
+                  {/* TAB 5: MATCHED INTERACTIVE TOOL */}
+                  {campaignTab === 'tool' && campaignResult.suggestedTool && (
+                    <div className="bg-white border border-amber-200 rounded-xl p-5 space-y-4 pt-1 text-right">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-row-reverse">
+                        <div>
+                          <span className="text-[10px] text-amber-600 font-bold block">כלי המרה שקטה באתר</span>
+                          <h4 className="font-display font-bold text-slate-900 text-base">{campaignResult.suggestedTool.name}</h4>
+                        </div>
+                        <a
+                          href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-xs flex-row-reverse"
+                        >
+                          <span>התנסה בכלי באתר</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1 text-right">
+                          <span className="text-[10px] text-slate-400 font-bold block">תיאור הכלי</span>
+                          <p className="text-slate-800">{campaignResult.suggestedTool.description}</p>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1 text-right">
+                          <span className="text-[10px] text-slate-400 font-bold block">כתובת ה-URL באתר</span>
+                          <code className="text-blue-600 font-mono text-[11px] block" dir="ltr">https://www.heartcompass.co.il{campaignResult.suggestedTool.slug}</code>
+                        </div>
+                      </div>
+
+                      <div className="bg-amber-50/70 border border-amber-200 p-3.5 rounded-xl text-xs space-y-1.5 text-right">
+                        <span className="font-bold text-amber-900 block">מדוע דווקא כלי זה מתאים למאמר?</span>
+                        <p className="text-amber-800 leading-relaxed">{campaignResult.suggestedTool.placementReason}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Sanity-ready fields panel — each field maps 1:1 to the Sanity `article` schema */}
               <div className="bg-white rounded-2xl border border-emerald-200/80 p-5 shadow-xs space-y-3 text-right">
                 <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3 flex-row-reverse justify-end">
                   <FileCode className="w-4.5 h-4.5 text-emerald-600" />
                   <div>
-                    <h4 className="font-display font-bold text-slate-800 text-sm">שדות מוכנים להדבקה ב-Sanity (מסמך "מאמר")</h4>
-                    <p className="text-[10px] text-slate-400">כל שדה ממופה לשם השדה ב-Sanity. העתק והדבק ידנית.</p>
+                    <h4 className="font-display font-bold text-slate-800 text-sm">שדות מותאמים 1:1 לסאניטי (Sanity CMS) ו-GEO</h4>
+                    <p className="text-[10px] text-slate-400">מוכנים להדבקה ידנית או שהועלו בלחיצה אחת לסאניטי כטיוטה.</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <CopyField label="כותרת ראשית" sanityField="title" value={generatedArticle.title} />
-                  <CopyField label="שורת מסגור (זהב)" sanityField="goldLine" value={generatedArticle.goldLine} />
+                  <CopyField label="כותרת ראשית (H1)" sanityField="title" value={generatedArticle.title} />
+                  <CopyField label="שורת מסגור / זהב" sanityField="goldLine" value={generatedArticle.goldLine} />
                   <CopyField label="Slug" sanityField="slug.current" value={generatedArticle.urlSlug} mono />
                   <CopyField label="תחומים" sanityField="tags" value={generatedArticle.tags?.join(', ')} />
+                  <CopyField label="תחום ראשי (Domain)" sanityField="domain" value={generatedArticle.domain} />
+                  <CopyField label="כוונת חיפוש" sanityField="searchIntent" value={generatedArticle.searchIntent} />
+                  <CopyField label="תפקיד תוכן" sanityField="contentRole" value={generatedArticle.contentRole} />
                   <CopyField label="תקציר ענייני" sanityField="excerpt" value={generatedArticle.excerpt} multiline />
-                  <CopyField label="שורת סמכות" sanityField="authorLine" value={generatedArticle.authorLine} />
+                  <CopyField label="שורת סמכות מחבר" sanityField="authorLine" value={generatedArticle.authorLine} />
                   <CopyField label="Alt לתמונה ראשית" sanityField="mainImage.alt" value={generatedArticle.imageAlt} multiline />
-                  <CopyField label="משפט ציטוט למנוע (AEO)" sanityField="—" value={generatedArticle.aiCitation} multiline />
+                  <CopyField label="ציטוט למנועי AI (AEO)" sanityField="aiCitation" value={generatedArticle.aiCitation} multiline />
+                  <CopyField label="תגיות כאב נסתרות (Pain Tags)" sanityField="painTags" value={generatedArticle.painTags?.join(', ')} />
+                  <CopyField label="תיאור מבדל ל-AI" sanityField="disambiguatingDescription" value={generatedArticle.disambiguatingDescription} multiline />
+                  <CopyField label="נקודות מפתח (Featured Snippet)" sanityField="keyTakeaways" value={generatedArticle.keyTakeaways?.items ? `${generatedArticle.keyTakeaways.heading}:\n` + generatedArticle.keyTakeaways.items.map(it => `• ${it}`).join('\n') : undefined} multiline />
+                  <CopyField label="שיוך קטגוריה ועוגן" sanityField="insightPlacement" value={generatedArticle.insightPlacement ? `${generatedArticle.insightPlacement.domain} > ${generatedArticle.insightPlacement.category}` : undefined} />
+                  <CopyField label="ביטויי זנב ארוך (Search Phrases)" sanityField="searchPhrases" value={generatedArticle.searchPhrases?.join('\n')} multiline />
                 </div>
 
-                <CopyField label="גוף המאמר (HTML להדבקה)" sanityField="body" value={generatedArticle.bodyHtml} mono multiline />
+                <CopyField label="גוף המאמר (HTML RTL להדבקה)" sanityField="body" value={generatedArticle.bodyHtml} mono multiline />
+                
+                {generatedArticle.jsonLdSchema && (
+                  <CopyField label="Schema.org JSON-LD (סכמת מיקרו-דאטה מותאמת לגוגל ו-AI)" sanityField="jsonLd" value={JSON.stringify(generatedArticle.jsonLdSchema, null, 2)} mono multiline />
+                )}
 
                 <p className="text-[10px] text-slate-400 leading-relaxed bg-slate-50 rounded-lg p-2.5">
                   שדות שנשארים לך למלא ידנית ב-Sanity: תמונה ראשית (<span dir="ltr" className="font-mono">mainImage</span>), מחבר (<span dir="ltr" className="font-mono">author</span>), תאריך פרסום (<span dir="ltr" className="font-mono">publishedAt</span>).
@@ -866,12 +1464,12 @@ ${list}
                           onChange={(e) => setSelectedModel(e.target.value)}
                           className="w-full text-right bg-slate-900 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-400 outline-none"
                         >
-                          <option value="gemini-3.5-flash">gemini-3.5-flash (עריכות מהירות וכלליות - לא מצריך חיוב)</option>
-                          <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (משימות שכתוב ומבנה מורכבות)</option>
-                          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (שינויים ותיקונים מהירים מקומיים)</option>
+                          <option value="gemini-2.5-flash">Gemini 2.5 Flash (עריכות מהירות וכלליות)</option>
+                          <option value="gemini-2.5-pro">Gemini 2.5 Pro (משימות שכתוב עומק ומבנה מורכב)</option>
+                          <option value="gemini-2.0-flash">Gemini 2.0 Flash (תיקונים ושינויים מקומיים)</option>
                         </select>
-                        {selectedModel === 'gemini-3.1-pro-preview' && (
-                          <span className="text-[10px] text-amber-300 mt-1">מודל מתקדם לניתוח עומק - ודא הפעלת מפתחות חיוב מתאימים.</span>
+                        {selectedModel === 'gemini-2.5-pro' && (
+                          <span className="text-[10px] text-amber-300 mt-1">מודל עומק מתקדם לשכתוב מקיף.</span>
                         )}
                       </div>
 
