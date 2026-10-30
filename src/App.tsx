@@ -365,15 +365,19 @@ export default function App() {
   const handleAnalyzeCompetitors = async (targetUrl: string, topic: string, append = false) => {
     setCompetitorsLoading(true);
     setNotification(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
       const exclude = append ? competitors.map((c) => c.competitorName) : [];
       const response = await fetch('/api/seo/analyze-competitors', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUrl, topic, exclude }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || 'שגיאה בניתוח המתחרים');
       }
@@ -385,8 +389,10 @@ export default function App() {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error(err);
-      setNotification({ type: 'error', message: err.message || 'ניתוח המתחרים נכשל. אנא בדוק את חיבור השרת.' });
+      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'ניתוח המתחרים נכשל.');
+      setNotification({ type: 'error', message: msg });
     } finally {
       setCompetitorsLoading(false);
     }
@@ -396,15 +402,19 @@ export default function App() {
   const handleSearchKeywords = async (seedKeyword: string, topic: string, append = false) => {
     setKeywordsLoading(true);
     setNotification(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
       const exclude = append ? keywords.map((k) => k.keyword) : [];
       const response = await fetch('/api/seo/search-keywords', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seedKeyword, topic, exclude }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || 'שגיאה בחיפוש מילות מפתח');
       }
@@ -416,8 +426,10 @@ export default function App() {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error(err);
-      setNotification({ type: 'error', message: err.message || 'חיפוש מילות מפתח נכשל. נסה שוב.' });
+      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'חיפוש מילות מפתח נכשל. נסה שוב.');
+      setNotification({ type: 'error', message: msg });
     } finally {
       setKeywordsLoading(false);
     }

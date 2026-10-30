@@ -37,10 +37,26 @@ export default function SocialSuite() {
   }, []);
 
   const post = async (url: string, body: any) => {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'שגיאה');
-    return data;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `שגיאת שרת (${r.status})`);
+      return data;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error('זמן ההמתנה לשרת הסתיים. נסה שוב או עבור למודל Gemini 3.8 Flash.');
+      }
+      throw err;
+    }
   };
 
   const handleGeneratePosts = async (params: { slug?: string; topic?: string; platforms: string[]; goal?: string }) => {

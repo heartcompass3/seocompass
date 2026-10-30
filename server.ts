@@ -81,6 +81,17 @@ function parseJSONResponse(text: string) {
   }
 }
 
+// Ensure any deprecated model names are automatically mapped to active Gemini 3.8 models
+function sanitizeModel(model?: string): string {
+  if (!model) return "gemini-3.8-flash";
+  const m = model.toLowerCase();
+  if (m.includes("2.5") || m.includes("2.0") || m.includes("1.5")) {
+    if (m.includes("pro")) return "gemini-3.8-pro";
+    return "gemini-3.8-flash";
+  }
+  return model;
+}
+
 // Get Sanity Auth Token from env or local config
 function getSanityToken(): string | null {
   if (process.env.SANITY_AUTH_TOKEN) return process.env.SANITY_AUTH_TOKEN;
@@ -154,9 +165,10 @@ async function generateWithFallback(
   client: GoogleGenAI,
   args: { model: string; contents: any; config?: any }
 ) {
-  const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.8-flash";
+  const modelToUse = sanitizeModel(args.model);
+  const FALLBACK = sanitizeModel(process.env.GEMINI_FALLBACK_MODEL || "gemini-3.8-flash");
   try {
-    return await client.models.generateContent(args);
+    return await client.models.generateContent({ ...args, model: modelToUse });
   } catch (err: any) {
     const msg = String(err?.message || err);
     const isRetryable = err?.status === 429 || err?.status === 404 || /429|404|RESOURCE_EXHAUSTED|quota|rate.?limit|no longer available/i.test(msg);
@@ -184,39 +196,48 @@ function friendlyError(err: any): string {
 }
 
 // Fetch live Google Israel SERP results via SerpApi (https://serpapi.com).
-// Returns null when no SERPAPI_KEY is configured so callers can fall back to
-// a Gemini-only flow. Throws on an actual API/network error.
+// Uses a 3.5s hard timeout so external network issues never hang the server.
+// Returns null when no SERPAPI_KEY is configured or on timeout/network failure.
 async function fetchSerpResults(query: string) {
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey || !query) return null;
 
-  const params = new URLSearchParams({
-    engine: "google",
-    q: query,
-    google_domain: "google.co.il",
-    gl: "il",
-    hl: "he",
-    num: "10",
-    api_key: apiKey,
-  });
+  try {
+    const params = new URLSearchParams({
+      engine: "google",
+      q: query,
+      google_domain: "google.co.il",
+      gl: "il",
+      hl: "he",
+      num: "10",
+      api_key: apiKey,
+    });
 
-  const resp = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
-  if (!resp.ok) {
-    throw new Error(`בקשת SerpApi נכשלה (קוד ${resp.status})`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const resp = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+
+    const organic = (data.organic_results || []).map((r: any) => {
+      let domain = r.displayed_link || "";
+      try {
+        domain = new URL(r.link).hostname.replace(/^www\./, "");
+      } catch { /* keep displayed_link fallback */ }
+      return { position: r.position, title: r.title, link: r.link, domain, snippet: r.snippet || "" };
+    });
+    const relatedQuestions = (data.related_questions || []).map((q: any) => q.question).filter(Boolean);
+    const relatedSearches = (data.related_searches || []).map((s: any) => s.query).filter(Boolean);
+
+    return { organic, relatedQuestions, relatedSearches };
+  } catch {
+    return null;
   }
-  const data: any = await resp.json();
-
-  const organic = (data.organic_results || []).map((r: any) => {
-    let domain = r.displayed_link || "";
-    try {
-      domain = new URL(r.link).hostname.replace(/^www\./, "");
-    } catch { /* keep displayed_link fallback */ }
-    return { position: r.position, title: r.title, link: r.link, domain, snippet: r.snippet || "" };
-  });
-  const relatedQuestions = (data.related_questions || []).map((q: any) => q.question).filter(Boolean);
-  const relatedSearches = (data.related_searches || []).map((s: any) => s.query).filter(Boolean);
-
-  return { organic, relatedQuestions, relatedSearches };
 }
 
 // 1. Competitor Analysis Router
@@ -335,59 +356,53 @@ app.post("/api/seo/search-keywords", async (req, res) => {
 
     const client = getAIClient();
 
-    // Real keyword ideas from Google IL via SerpApi (related searches + PAA).
-    // SerpApi does the live search; Gemini only estimates the metrics, so we no
-    // longer need Gemini's grounding (which caused the 429s).
     let serpKeywords = "";
     try {
       const serp = await fetchSerpResults(seedKeyword);
       if (serp) {
         const ideas = [...serp.relatedSearches, ...serp.relatedQuestions];
         if (ideas.length) {
-          serpKeywords = `\n\nרעיונות מילות מפתח אמיתיים מגוגל ישראל (SerpApi) עבור "${seedKeyword}". בסס את הרשימה בעיקר על אלה:\n${ideas.map((k) => `- ${k}`).join("\n")}\n`;
+          serpKeywords = `\n\nביטויי חיפוש אמיתיים מגוגל ישראל (SerpApi) עבור "${seedKeyword}":\n${ideas.map((k) => `- ${k}`).join("\n")}\n`;
         }
       }
-    } catch (serpErr) {
-      console.warn("SERP keyword grounding failed, continuing:", serpErr);
+    } catch {
+      // ignore
     }
 
-    const prompt = `בצע מחקר מילות מפתח מקיף ועדכני עבור מילת המפתח הבאה או הנושא הבא:
-מילת מפתח / נושא ראשי: ${seedKeyword}
-נושא נלווה: ${topic || "ללא נושא נלווה"}${serpKeywords}${excludeNote}
+    const prompt = `אתה אסטרטג SEO בכיר ומומחה למחקר מילות מפתח אורגניות בגוגל ישראל עבור המותג "מצפן הלב" (יוסי מדלסי · מומחה לשחרור דפוסים, הדרכת הורים למתבגרים, אימון רגשי לנוער ומשברי גיל ההתבגרות).
 
-עליך להציע את מילות המפתח המניבות, מילות הזנב הארוך (Long-tail) והביטויים הקשורים שהכי כדאי לקדם בגוגל ישראל (התבסס על הרעיונות האמיתיים לעיל אם סופקו), כולל חיזוי נפח חיפוש מוערך, רמת תחרות קושי (Difficulty), עלות לקליק מוערכת בדולרים (CPC), כוונת החיפוש הדומיננטית (Intent), מדד יעילות מילת המפתח (KEI - Keyword Effectiveness Index שבו נפח חיפוש חלקי רמת קושי בריבוע), ערך הקידום (SEO Value), רמת רלוונטיות לנושא והמלצה מעשית.
+בצע מחקר מילות מפתח מעמיק, ממוקד ומניב עבור:
+ביטוי בסיס / מילת מפתח ראשית: "${seedKeyword}"
+נושא נלווה: "${topic || "הדרכת הורים למתבגרים, אימון רגשי לנוער ושחרור דפוסים"}"${serpKeywords}${excludeNote}
 
-החזר בדיוק רשימה של 8-10 מילות מפתח בפורמט JSON של סרסור (Array of Objects):
+חוקי ברזל מחייבים לרלוונטיות (Relevance Hard Rules):
+1. **התאמה מלאה למצפן הלב:** כל מילות המפתח המוצעות חייבות לייצג שאלות, מצוקות וכוונות חיפוש של הורים ונוער המחפשים מענה רגשי, הדרכה, ויסות רגשי, שחרור דפוסים, התמודדות עם התפרצויות זעם, ניכור, חרדות חברתיות, משברי גיל ההתבגרות וקשר משפחתי.
+2. **איסור מוחלט על נושאים לא רלוונטיים:** אסור בתכלית האיסור לכלול ביטויים בירוקרטיים (הסכמי גירושין, ביטוח לאומי, מענקים), לימודיים-טכניים (בגרויות, משרד החינוך, ציונים), הגדרות ביולוגיות של ספרי לימוד, או טיפולים תרופתיים/פסיכיאטריים.
+3. **כוונות חיפוש אמיתיות:** התמקד בביטויי זנב ארוך (Long-tail) שהורים או צעירים באמת מקלידים כשהם חווים קושי ומחפשים ליווי או פתרון מעשי (Commercial, Transactional, High-Value Informational).
+4. **מדדים מציאותיים לשוק הישראלי:** נפחי חיפוש ועלויות קליק ריאליים לגוגל ישראל.
+
+החזר אך ורק מערך JSON תקין המכיל בדיוק 8-10 מילות מפתח במבנה הבא:
 [
   {
-    "keyword": "מילת המפתח המוצעת לשדרוג",
-    "searchVolume": 1200, // נפח חיפוש חודשי מוערך בגוגל ישראל
-    "difficulty": 45, // רמת קושי מ-0 (קל מאוד) עד 100 (קשה מאוד)
-    "cpc": 2.15, // עלות לקליק מוערכת ב-USD (מספר עשרוני)
-    "intent": "Informational" | "Transactional" | "Navigational" | "Commercial",
-    "kei": 23.4, // מדד KEI (נפח חיפוש / קושי)
+    "keyword": "מילת המפתח המוצעת בעברית",
+    "searchVolume": 1400,
+    "difficulty": 32,
+    "cpc": 2.80,
+    "intent": "Commercial" | "Informational" | "Transactional" | "Navigational",
+    "kei": 24.5,
     "seoValue": "High" | "Medium" | "Low",
-    "relevanceToTopic": 9, // ציון רלוונטיות מ-1 עד 10 לקבוצה
-    "suggestedAction": "הנחיה מעשית קצרה כיצד לקדם מילה זו (למשל: 'כתיבת מדריך מקיף וקישור מהעמוד הראשי')"
+    "relevanceToTopic": 10,
+    "suggestedAction": "המלצה אסטרטגית קונקרטית בעברית"
   }
-]
+]`;
 
-יש לכתוב את מילות המפתח ברובן בעברית (מלבד ביטויים לועזיים רשמיים), ואת כל שאר השדות בעברית מקצועית וברורה עבור מקדם אתרים מקצועי בארץ.`;
-
-    const kwConfig: any = {
-      systemInstruction: "You are an elite local SEO planner and keyword strategist who turns real Israeli search data into actionable keyword opportunities with estimated metrics.",
-    };
-    // Skip grounding when SerpApi already provided real keyword ideas.
-    if (serpKeywords) {
-      kwConfig.responseMimeType = "application/json";
-    } else {
-      kwConfig.tools = [{ googleSearch: {} }];
-    }
-
-    const response = await client.models.generateContent({
-      model: process.env.KEYWORD_MODEL || "gemini-3.8-flash",
+    const response = await generateWithFallback(client, {
+      model: sanitizeModel(process.env.KEYWORD_MODEL || "gemini-3.8-flash"),
       contents: prompt,
-      config: kwConfig,
+      config: {
+        systemInstruction: "You are an elite Israeli SEO strategist specialized in emotional coaching and parenting keywords for 'מצפן הלב'. You output strictly valid JSON with realistic metrics and 100% niche relevance.",
+        responseMimeType: "application/json",
+      },
     });
 
     const resultText = response.text || "[]";
@@ -395,7 +410,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
     res.json({ keywords: data });
   } catch (error: any) {
     console.error("Error in search-keywords:", error);
-    res.status(500).json({ error: error.message || "שגיאה בחיפוש מילות מפתח" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -1416,7 +1431,7 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-3.8-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
@@ -1481,7 +1496,7 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
 כל הטקסט בעברית מקצועית.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.COMPETITOR_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(model || process.env.COMPETITOR_MODEL || "gemini-3.8-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
@@ -1517,7 +1532,7 @@ app.post("/api/social/chat", async (req, res) => {
     if (useSearch) config.tools = [{ googleSearch: {} }];
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-3.8-flash"),
       contents,
       config,
     });
