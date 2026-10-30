@@ -11,7 +11,8 @@ import {
 import { 
   CompetitorAnalysis, 
   KeywordResearchResult, 
-  GeneratedArticle 
+  GeneratedArticle,
+  YourSiteAnalysis
 } from './types';
 
 // Components
@@ -217,6 +218,7 @@ export default function App() {
   // Business state
   const [selectedKeywordForArticle, setSelectedKeywordForArticle] = useState('');
   const [competitors, setCompetitors] = useState<CompetitorAnalysis[]>(INITIAL_COMPETITORS);
+  const [yourSite, setYourSite] = useState<YourSiteAnalysis | null>(null);
   const [keywords, setKeywords] = useState<KeywordResearchResult[]>(INITIAL_KEYWORDS);
   const [generatedArticle, setGeneratedArticle] = useState<GeneratedArticle | null>(null);
   const [savedArticles, setSavedArticles] = useState<GeneratedArticle[]>([]);
@@ -369,7 +371,7 @@ export default function App() {
     setCompetitorError(null);
     setNotification(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const exclude = append ? competitors.map((c) => c.competitorName) : [];
       const response = await fetch('/api/seo/analyze-competitors', {
@@ -387,7 +389,10 @@ export default function App() {
 
       if (data.competitors && Array.isArray(data.competitors)) {
         setCompetitors((prev) => (append ? [...prev, ...data.competitors] : data.competitors));
-        setNotification({ type: 'success', message: append ? 'נוספו מתחרים חדשים לרשימה.' : 'ניתוח המתחרים האורגני הושלם בהצלחה באמצעות כלי חיפוש גוגל חי.' });
+        if (data.yourSite) {
+          setYourSite(data.yourSite);
+        }
+        setNotification({ type: 'success', message: append ? 'נוספו מתחרים חדשים לרשימה.' : 'ניתוח המתחרים האורגני הושלם בהצלחה עבור עסקים פרטיים באותו קנה מידה.' });
       } else {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }
@@ -408,7 +413,7 @@ export default function App() {
     setKeywordError(null);
     setNotification(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const exclude = append ? keywords.map((k) => k.keyword) : [];
       const response = await fetch('/api/seo/search-keywords', {
@@ -704,6 +709,8 @@ export default function App() {
               onAnalyze={handleAnalyzeCompetitors}
               loading={competitorsLoading}
               competitors={competitors}
+              yourSite={yourSite}
+              error={competitorError}
             />
           )}
 

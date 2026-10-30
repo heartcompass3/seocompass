@@ -92,6 +92,8 @@ provider.addScope('https://www.googleapis.com/auth/drive.file');
 // The scope is requested on sign-in; if the user hasn't granted it yet, the
 // Search Console tab prompts them to reconnect.
 provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
+// Force consent prompt on reconnect so newly added scopes (like Search Console) are granted
+provider.setCustomParameters({ prompt: 'consent', access_type: 'offline' });
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;

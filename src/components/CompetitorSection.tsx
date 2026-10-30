@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { CompetitorAnalysis } from '../types';
-import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2, Plus } from 'lucide-react';
+import { CompetitorAnalysis, YourSiteAnalysis } from '../types';
+import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2, Plus, Compass, Sparkles, TrendingUp, Target } from 'lucide-react';
 
 interface CompetitorSectionProps {
   onAnalyze: (targetUrl: string, topic: string, append?: boolean) => Promise<void>;
   loading: boolean;
   competitors: CompetitorAnalysis[];
+  yourSite?: YourSiteAnalysis | null;
+  error?: string | null;
 }
 
-export default function CompetitorSection({ onAnalyze, loading, competitors }: CompetitorSectionProps) {
+export default function CompetitorSection({ onAnalyze, loading, competitors, yourSite, error }: CompetitorSectionProps) {
   const [targetUrl, setTargetUrl] = useState('https://www.heartcompass.co.il');
   const [topic, setTopic] = useState('הדרכת הורים ואימון רגשי לנוער');
 
@@ -86,6 +88,17 @@ export default function CompetitorSection({ onAnalyze, loading, competitors }: C
         </form>
       </div>
 
+      {/* Error alert if any */}
+      {error && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-right flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs text-rose-800">
+            <span className="font-bold block mb-0.5">שגיאה בניתוח המתחרים:</span>
+            {error}
+          </div>
+        </div>
+      )}
+
       {/* Loading Skeletal state */}
       {loading && (
         <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-pulse space-y-4">
@@ -129,6 +142,91 @@ export default function CompetitorSection({ onAnalyze, loading, competitors }: C
               })}
             </div>
           </div>
+
+          {/* Your Site Status & Benchmark Card */}
+          {yourSite && (
+            <div className="bg-gradient-to-br from-blue-50/90 via-indigo-50/50 to-white rounded-2xl border-2 border-blue-200/80 p-5 shadow-xs text-right">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-blue-100 pb-4 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-600 text-white rounded-xl shadow-xs">
+                    <Compass className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-md">האתר שלך</span>
+                      <h4 className="font-display font-bold text-slate-900 text-base">{yourSite.name}</h4>
+                    </div>
+                    <span className="text-xs text-slate-500 font-mono" dir="ltr">{yourSite.websiteUrl}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-6 bg-white/80 backdrop-blur-xs px-4 py-2 rounded-xl border border-blue-100">
+                  <div className="text-center">
+                    <span className="text-[10px] text-slate-400 block font-medium">סמכות דומיין (DA)</span>
+                    <span className="text-lg font-bold font-mono text-blue-600">{yourSite.domainAuthority}</span>
+                  </div>
+                  <div className="w-px h-8 bg-slate-200" />
+                  <div className="text-center">
+                    <span className="text-[10px] text-slate-400 block font-medium">תנועה חודשית מוערכת</span>
+                    <span className="text-sm font-bold font-mono text-slate-700">{yourSite.estimatedTraffic}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ranking overview */}
+              <div className="mb-4 bg-white/70 rounded-xl p-3 border border-blue-150/60">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 mb-1">
+                  <TrendingUp className="w-4 h-4 text-blue-600" />
+                  <span>סטטוס נוכחות ומיקומים בגוגל:</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">{yourSite.rankingOverview}</p>
+              </div>
+
+              {/* Strengths & Opportunities */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                <div className="bg-white/80 rounded-xl p-3 border border-emerald-150">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 mb-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>החוזקות הייחודיות שלך מול המתחרים:</span>
+                  </div>
+                  <ul className="space-y-1">
+                    {yourSite.strengths?.map((s, idx) => (
+                      <li key={idx} className="text-xs text-slate-600 flex items-start gap-1.5">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="bg-white/80 rounded-xl p-3 border border-amber-150">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800 mb-1.5">
+                    <Target className="w-3.5 h-3.5 text-amber-600" />
+                    <span>הזדמנויות לעקיפת המתחרים:</span>
+                  </div>
+                  <ul className="space-y-1">
+                    {yourSite.opportunities?.map((o, idx) => (
+                      <li key={idx} className="text-xs text-slate-600 flex items-start gap-1.5">
+                        <span className="text-amber-500 font-bold">•</span>
+                        <span>{o}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Action Plan */}
+              {yourSite.actionPlan && (
+                <div className="bg-blue-600/5 border border-blue-200/60 rounded-xl p-3 text-xs text-blue-900 flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">המלצת פעולה מנצחת: </span>
+                    <span>{yourSite.actionPlan}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             {competitors.map((comp, idx) => (

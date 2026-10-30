@@ -38,7 +38,7 @@ export default function SocialSuite() {
 
   const post = async (url: string, body: any) => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const r = await fetch(url, {
         method: 'POST',

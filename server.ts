@@ -43,42 +43,138 @@ function getAIClient() {
 
 // Ensure clean JSON string parsing from Gemini response
 function parseJSONResponse(text: string) {
+  const clean = (text || "").trim();
   try {
-    // Try straightforward parsing
-    return JSON.parse(text);
-  } catch (err) {
+    return JSON.parse(clean);
+  } catch {
     // If it contains markdown code blocks
-    const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+    const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match && match[1]) {
       try {
         return JSON.parse(match[1].trim());
-      } catch (e2) {
-        throw new Error("קבלת הנתונים נכשלה עקב שגיאת מבנה פנימית. אנא נסה שוב.");
+      } catch {
+        // continue
       }
     }
-    
-    // Fallback: try finding first '{' and last '}'
-    const firstBrace = text.indexOf("[");
-    const lastBrace = text.lastIndexOf("]");
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      try {
-        return JSON.parse(text.substring(firstBrace, lastBrace + 1));
-      } catch (e3) {
-        // Try object fallback
-        const firstObj = text.indexOf("{");
-        const lastObj = text.lastIndexOf("}");
-        if (firstObj !== -1 && lastObj !== -1 && lastObj > firstObj) {
-          try {
-            return JSON.parse(text.substring(firstObj, lastObj + 1));
-          } catch (e4) {
-            // continue
-          }
+
+    // Identify outermost container by whichever brace appears first
+    const firstBrace = clean.indexOf("{");
+    const firstBracket = clean.indexOf("[");
+
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+      const lastBrace = clean.lastIndexOf("}");
+      if (lastBrace > firstBrace) {
+        try {
+          return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+        } catch {
+          // continue
         }
       }
     }
-    
+
+    if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+      const lastBracket = clean.lastIndexOf("]");
+      if (lastBracket > firstBracket) {
+        try {
+          return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    // Fallbacks if first attempt failed
+    const lastBrace = clean.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+      } catch {
+        // continue
+      }
+    }
+
+    const lastBracket = clean.lastIndexOf("]");
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
+      } catch {
+        // continue
+      }
+    }
+
     throw new Error("המערכת לא הצליחה לקרוא את מבנה הנתונים. אנא נסה שנית.");
   }
+}
+
+// Institutional domains to exclude from competitor analysis (Kupot Cholim, hospitals,
+// nationwide institutes, directories, portals, etc.) so results strictly match the user's scale.
+const EXCLUDED_COMPETITOR_DOMAINS = new Set([
+  // Kupot Cholim
+  "clalit.co.il",
+  "maccabi4u.co.il",
+  "meuhedet.co.il",
+  "leumit.co.il",
+  // Hospitals & medical centers
+  "sheba.co.il",
+  "tasmc.org.il",
+  "hadassah.org.il",
+  "rambam.org.il",
+  "schneider.co.il",
+  "schneider.org.il",
+  "geha.org.il",
+  "lev-hasharon.co.il",
+  "shamir.gov.il",
+  "wolfson.org.il",
+  "kaplan.org.il",
+  "b-zion.org.il",
+  "soroka.org.il",
+  "meir.org.il",
+  "asafharohe.co.il",
+  "poriya.health.gov.il",
+  "hillel-yaffe.co.il",
+  // Large nationwide institutes & associations
+  "adler.org.il",
+  "eran.org.il",
+  "enosh.org.il",
+  "elem.org.il",
+  "kolzchut.org.il",
+  "natal.org.il",
+  "alut.org.il",
+  "beit-ekstein.org.il",
+  "nitzan-israel.org.il",
+  // Portals, directories, forums & media
+  "betipulnet.co.il",
+  "alhasapa.co.il",
+  "tipulpoint.co.il",
+  "doctors.co.il",
+  "infomed.co.il",
+  "ynet.co.il",
+  "mako.co.il",
+  "walla.co.il",
+  "haaretz.co.il",
+  "themarker.com",
+  "calcalist.co.il",
+  "israelhayom.co.il",
+  "wikipedia.org",
+  "youtube.com",
+  "facebook.com",
+  "instagram.com",
+  "tiktok.com",
+  "linkedin.com",
+  "twitter.com",
+  "x.com"
+]);
+
+function isExcludedCompetitorDomain(rawDomain: string): boolean {
+  if (!rawDomain) return false;
+  const d = rawDomain.toLowerCase().replace(/^www\./, "").trim();
+  if (d.endsWith(".gov.il") || d.endsWith(".muni.il") || d.endsWith(".ac.il")) {
+    return true;
+  }
+  for (const excluded of EXCLUDED_COMPETITOR_DOMAINS) {
+    if (d === excluded || d.endsWith("." + excluded)) return true;
+  }
+  return false;
 }
 
 // Ensure any deprecated model names are automatically mapped to active Gemini 3.8 models
@@ -253,93 +349,112 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
 
     const client = getAIClient();
 
-    // Ground the analysis in real Google IL ranking data when SerpApi is set.
+    // Ground the analysis in real Google IL ranking data when SerpApi is set,
+    // strictly filtering out institutional/HMO/government domains.
     let serpGrounding = "";
     try {
       const serpQuery = topic || targetUrl;
       const serp = await fetchSerpResults(serpQuery);
       if (serp && serp.organic.length) {
-        const top = serp.organic
-          .slice(0, 10)
-          .map((r: any) => `#${r.position} ${r.domain} — ${r.title}`)
-          .join("\n");
-        serpGrounding = `\n\nנתוני SERP אמיתיים מגוגל ישראל (SerpApi) עבור "${serpQuery}". בסס את הניתוח על המתחרים האמיתיים שמדורגים בפועל, לא על השערות:\nתוצאות אורגניות מובילות:\n${top}\n`;
-        if (serp.relatedQuestions.length) {
-          serpGrounding += `\nשאלות שאנשים שואלים (PAA): ${serp.relatedQuestions.join(" | ")}\n`;
+        const filtered = serp.organic.filter((r: any) => !isExcludedCompetitorDomain(r.domain));
+        if (filtered.length) {
+          const top = filtered
+            .slice(0, 8)
+            .map((r: any) => `#${r.position} ${r.domain} — ${r.title}`)
+            .join("\n");
+          serpGrounding = `\n\nמתחרים פרטיים ועצמאיים אמיתיים שנמצאו בגוגל ישראל (SerpApi) עבור "${serpQuery}":\n${top}\n`;
         }
-        if (serp.relatedSearches.length) {
-          serpGrounding += `חיפושים קשורים: ${serp.relatedSearches.join(" | ")}\n`;
+        if (serp.relatedQuestions.length) {
+          serpGrounding += `\nשאלות שאנשים שואלים (PAA): ${serp.relatedQuestions.slice(0, 5).join(" | ")}\n`;
         }
       }
     } catch (serpErr) {
-      console.warn("SERP grounding failed, continuing with Gemini-only analysis:", serpErr);
+      console.warn("SERP grounding failed, continuing with direct Gemini analysis:", serpErr);
     }
 
-    const prompt = `בצע ניתוח מתחרים מעמיק ומקצועי עבור אתר האינטרנט או הנושא הבאים:
-כתובת האתר: ${targetUrl || "לא צוין אתר ספציפי"}
-הנושא/הנישה: ${topic || "ניתוח כללי של האתר"}${serpGrounding}${excludeNote}
+    const currentSiteUrl = targetUrl || "https://www.heartcompass.co.il";
 
-עליך לבצע מחקר אינטרנטי עדכני באמצעות כלי החיפוש של גוגל כדי למצוא את 3 המתחרים האורגניים הרלוונטיים של האתר או הנושא הזה בגוגל ישראל, ולאסוף נתונים מדויקים ככל הניתן של נתחי שוק, מילות מפתח מובילות, סמכות דומיין מוערכת (Domain Authority), פרופיל קישורים חיצוניים, בעיות On-page SEO נפוצות ואסטרטגיית התוכן שלהם.
+    const prompt = `אתה אסטרטג SEO בכיר ומומחה לחיפוש מקומי בישראל (Google.co.il).
+בצע ניתוח מתחרים מעמיק והשוואתי עבור אתר האינטרנט והנישה הבאים:
+כתובת האתר שלך: ${currentSiteUrl}
+הנושא / הנישה: ${topic || "אימון וטיפול רגשי לנוער, הורים ומשפחה"}${serpGrounding}${excludeNote}
 
-הנחיה קריטית לרלוונטיות: האתר הזה הוא של מאמן/מטפל עצמאי בקנה מידה קטן, לא מוסד גדול. לכן תעדיף מתחרים **באותו קנה מידה** - מאמנים פרטיים, מטפלים עצמאיים, קליניקות בוטיק ובלוגים מקצועיים אישיים שמדרגים על ביטויי זנב-ארוך וניש. אל תחזיר מרכזים מוסדיים ענקיים (כמו מכונים ארציים גדולים) אלא אם אין באמת ברירה, וגם אז לכל היותר אחד מתוך השלושה. חפש מי שהקהל והשירות שלו דומים לשל מאמן יחיד, כי אלה המתחרים האמיתיים על אותו לקוח.
+הנחיית קנה מידה ורלוונטיות קריטית (Strict Competitor Persona):
+האתר הנחקר ("מצפן הלב" של יוסי מדלסי) הוא עסק פרטי ועצמאי בתחום האימון והטיפול הרגשי לנוער והדרכת הורים.
+לכן 3 המתחרים המוצגים חייבים להיות **אך ורק עסקים פרטיים באותו קנה מידה**:
+- מאמנים ומטפלים רגשיים עצמאיים בישראל (קליניקה פרטית / סולו).
+- יועצי הורים וזוגיות פרטיים.
+- קליניקות בוטיק פרטיות קטנות בתחום הליווי הרגשי.
 
-חובה להחזיר בדיוק 3 מתחרים, גם אם צריך להרחיב את החיפוש לביטויי ניש כדי למצוא מאמנים עצמאיים נוספים.
+איסור מוחלט (Strict Negative Constraints):
+1. אסור בשום פנים ואופן לכלול קופות חולים (כגון: כללית, מכבי, מאוחדת, לאומית)!
+2. אסור לכלול בתי חולים או מרכזים רפואיים (כגון: שיבא, איכילוב, שניידר, גהה)!
+3. אסור לכלול מכונים, עמותות או ארגונים ארציים גדולים (כגון: מכון אדלר, ער"ן, אנוש, עלם)!
+4. אסור לכלול פורטלים, אינדקסים או אתרי מדיה (כגון: בטיפולנט, על הספה, כל זכות, דוקטורס, Ynet)!
 
-החזר את התוצאה אך ורק בפורמט JSON כסרסור (Array of Objects) המכיל בדיוק 3 ישויות התואמות למבנה הבא (אל תפרט הערות נוספות מחוץ ל-JSON):
-[
-  {
-    "competitorName": "שם המתחרה הראשון (שם מותג או אתר מוכר)",
-    "websiteUrl": "כתובת אתר המתחרה (למשל, domain.co.il)",
-    "domainAuthority": 45, // מספר בין 1 ל-100 המייצג סמכות דומיין מוערכת בארץ
-    "estimatedTraffic": "35K/month", // מספר כניסות מוערך בחודש
-    "trafficShare": 30, // אחוז נתח שוק מתוך שלושתם (הסכום של השלושה צריך להיות 100)
-    "mainKeywords": ["מילת מפתח 1", "מילת מפתח 2", "מילת מפתח 3", "מילת מפתח 4", "מילת מפתח 5"],
-    "strengths": ["חוזק 1", "חוזק 2", "חוזק 3"],
-    "weaknesses": ["חולשה 1", "חולשה 2", "חולשה 3"],
-    "backlinkProfile": {
-      "strength": "High" | "Medium" | "Low",
-      "estimatedCount": 1520, // כמות קישורים חיצוניים מוערכת
-      "anchorTextStrategy": "תיאור קצר של אסטרטגיית אנקור טקסט"
-    },
-    "onPageSEOStatus": {
-      "score": 88, // ציון On-Page SEO בין 1 ל-100
-      "mobileFriendly": true, // ידידותי לנייד
-      "pageSpeed": "Fast" | "Average" | "Slow",
-      "missingMetaTags": ["Meta tag 1 חסר", "כותרת H1 כפולה"] // רשימת תגים חסרים או בעיות
-    },
-    "contentStrategy": "סיכום אסטרטגיית התוכן והבלוג שלהם (2-3 משפטים בעברית)"
-  }
-]
+חובה לנתח גם את האתר של המשתמש ("yourSite") כדי שיידע היכן הוא עומד ביחס למתחרים, וגם להציג בדיוק 3 מתחרים פרטיים עצמאיים אמיתיים.
 
-יש לכתוב את כל השדות הטקסטואליים והתיאורים בעברית רהוטה ומקצועית של אסטרטג SEO בכיר. השתמש בחיפוש גוגל כדי להציע מתחרים אמיתיים ורלוונטיים בארץ!`;
+החזר אך ורק אובייקט JSON תקין במבנה הבא:
+{
+  "yourSite": {
+    "name": "מצפן הלב (יוסי מדלסי)",
+    "websiteUrl": "${currentSiteUrl}",
+    "domainAuthority": 22,
+    "estimatedTraffic": "400-800/חודש",
+    "rankingOverview": "הערכת מיקום האתר שלך בגוגל ישראל: נוכחות ראשונית בביטויי זנב ארוך בנישת אימון רגשי ונוער, פוטנציאל דירוג גבוה מול מתחרים פרטיים בעזרת תוכן ממוקד ושיטת M.S.A.",
+    "strengths": ["גישה אישית אותנטית וממוקדת", "שיטת M.S.A הייחודית", "תוכן עמוק ומחבר רגשית"],
+    "opportunities": ["הובלה בביטויי זנב ארוך ספציפיים (חשיבת יתר, התקפי זעם)", "הרחבת קישורים מקומיים"],
+    "actionPlan": "התמקדות במאמרי עומק על ביטויי זנב-ארוך עם כוונת חיפוש מסחרית (Commercial Intent) כדי לעקוף את המתחרים הפרטיים."
+  },
+  "competitors": [
+    {
+      "competitorName": "שם המתחרה הפרטי (מאמן/מטפל עצמאי או קליניקת בוטיק)",
+      "websiteUrl": "domain.co.il",
+      "domainAuthority": 38,
+      "estimatedTraffic": "3.5K/month",
+      "trafficShare": 34,
+      "mainKeywords": ["מילת מפתח 1", "מילת מפתח 2", "מילת מפתח 3", "מילת מפתח 4", "מילת מפתח 5"],
+      "strengths": ["חוזק 1", "חוזק 2", "חוזק 3"],
+      "weaknesses": ["חולשה 1", "חולשה 2", "חולשה 3"],
+      "backlinkProfile": {
+        "strength": "Medium",
+        "estimatedCount": 420,
+        "anchorTextStrategy": "אסטרטגיית אנקור טקסט מקצועית"
+      },
+      "onPageSEOStatus": {
+        "score": 82,
+        "mobileFriendly": true,
+        "pageSpeed": "Fast",
+        "missingMetaTags": ["Meta description קצר", "תגיות H2 חסרות בחלק מהעמודים"]
+      },
+      "contentStrategy": "סיכום אסטרטגיית התוכן והבלוג שלהם (2-3 משפטים בעברית)"
+    }
+  ]
+}
 
-    // When SerpApi already supplied real ranking data, we do NOT need Gemini's
-    // Google Search grounding (which has a tiny, separate free-tier quota and is
-    // the reason competitor analysis kept returning 429). Analyze the real data
-    // with a clean JSON response instead. Grounding is kept only as a fallback
-    // when no SerpApi data is available.
+שים לב: במערך competitors חובה לכלול בדיוק 3 מתחרים פרטיים (סכום trafficShare של שלושתם = 100). כל הטקסטים בעברית רהוטה.`;
+
     const config: any = {
-      systemInstruction: "You are an elite SEO strategist and organic growth specialist with absolute expertise in Google Israel's local search ecosystem and search algorithms.",
+      systemInstruction: "You are an elite SEO strategist specializing in Google Israel's local search ecosystem. You analyze private practitioners and boutique clinics only. Never return health funds, hospitals, nationwide institutes, or directories. Always output valid JSON.",
+      responseMimeType: "application/json",
     };
-    if (serpGrounding) {
-      config.responseMimeType = "application/json";
-    } else {
-      config.tools = [{ googleSearch: {} }];
-    }
 
-    const response = await client.models.generateContent({
-      // Lightweight fast model for competitor analysis
-      model: process.env.COMPETITOR_MODEL || "gemini-3.8-flash",
+    const response = await generateWithFallback(client, {
+      model: sanitizeModel(process.env.COMPETITOR_MODEL || "gemini-3.8-flash"),
       contents: prompt,
       config,
     });
 
-    const resultText = response.text || "[]";
-    const data = parseJSONResponse(resultText);
-    res.json({ competitors: data });
+    const resultText = response.text || "{}";
+    const parsed = parseJSONResponse(resultText);
+
+    const competitors = Array.isArray(parsed) ? parsed : (parsed.competitors || []);
+    const yourSite = Array.isArray(parsed) ? null : (parsed.yourSite || null);
+
+    res.json({ competitors, yourSite });
   } catch (error: any) {
     console.error("Error in analyze-competitors:", error);
-    res.status(500).json({ error: error.message || "שגיאה בניתוח המתחרים" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -594,12 +709,8 @@ app.post("/api/seo/generate-article", async (req, res) => {
       responseMimeType: "application/json"
     };
 
-    if (useSearch) {
-      config.tools = [{ googleSearch: {} }];
-    }
-
-    const response = await client.models.generateContent({
-      model: modelName,
+    const response = await generateWithFallback(client, {
+      model: sanitizeModel(modelName),
       contents: prompt,
       config: config
     });
@@ -609,7 +720,7 @@ app.post("/api/seo/generate-article", async (req, res) => {
     res.json({ article: data });
   } catch (error: any) {
     console.error("Error in generate-article:", error);
-    res.status(500).json({ error: error.message || "שגיאה בייצור המאמר" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -690,12 +801,8 @@ ${article.content}
       responseMimeType: "application/json"
     };
 
-    if (useSearch) {
-      config.tools = [{ googleSearch: {} }];
-    }
-
-    const response = await client.models.generateContent({
-      model: modelName,
+    const response = await generateWithFallback(client, {
+      model: sanitizeModel(modelName),
       contents: prompt,
       config: config
     });
@@ -705,7 +812,7 @@ ${article.content}
     res.json({ article: data });
   } catch (error: any) {
     console.error("Error in edit-article:", error);
-    res.status(500).json({ error: error.message || "שגיאה בעריכת המאמר בעזרת AI" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -811,8 +918,8 @@ app.post("/api/seo/chat-expert", async (req, res) => {
       chatConfig.tools = [{ googleSearch: {} }];
     }
 
-    const response = await client.models.generateContent({
-      model: process.env.CHAT_MODEL || "gemini-3.8-flash",
+    const response = await generateWithFallback(client, {
+      model: sanitizeModel(process.env.CHAT_MODEL || "gemini-3.8-flash"),
       contents: geminiContents,
       config: chatConfig,
     });
@@ -820,7 +927,7 @@ app.post("/api/seo/chat-expert", async (req, res) => {
     res.json({ text: response.text });
   } catch (error: any) {
     console.error("Error in chat-expert:", error);
-    res.status(500).json({ error: error.message || "שגיאה בצ'אט המומחה" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -1470,16 +1577,18 @@ app.post("/api/social/competitor-social", async (req, res) => {
 
     const client = getAIClient();
 
-    // Ground in real Google IL signals when SerpApi is configured. We avoid the
-    // googleSearch grounding tool here because its tiny separate quota caused 429s.
+    // Ground in real Google IL signals when SerpApi is configured.
     let grounding = "";
     try {
       const serp = await fetchSerpResults(topic);
       if (serp && serp.organic.length) {
-        grounding = `\nתוצאות אמיתיות מגוגל ישראל עבור "${topic}" (בסס עליהן):\n${serp.organic
-          .slice(0, 8)
-          .map((r: any) => `- ${r.domain} — ${r.title}`)
-          .join("\n")}\n`;
+        const filtered = serp.organic.filter((r: any) => !isExcludedCompetitorDomain(r.domain));
+        if (filtered.length) {
+          grounding = `\nתוצאות אמיתיות מגוגל ישראל עבור "${topic}" (בסס עליהן):\n${filtered
+            .slice(0, 8)
+            .map((r: any) => `- ${r.domain} — ${r.title}`)
+            .join("\n")}\n`;
+        }
       }
     } catch { /* ignore */ }
 
@@ -1487,7 +1596,9 @@ app.post("/api/social/competitor-social", async (req, res) => {
 ${handle ? `החשבון שלנו: ${handle}.` : ""}
 המותג שלנו: "מצפן הלב" של יוסי מדלסי, מאמן רגשי לנוער/הורים/זוגות, בקנה מידה של נותן שירות עצמאי.
 
-מצא 3 מתחרים אמיתיים ורלוונטיים **באותו קנה מידה** (מאמנים/מטפלים/יוצרי תוכן עצמאיים בעברית), לא מותגי ענק. לכל מתחרה אמוד נתונים על בסיס חיפוש עדכני.
+מצא 3 מתחרים אמיתיים ורלוונטיים **באותו קנה מידה** (מאמנים/מטפלים/יוצרי תוכן עצמאיים פרטיים בעברית), לא מותגי ענק. לכל מתחרה אמוד נתונים על בסיס חיפוש עדכני.
+
+איסור מוחלט: אל תציג קופות חולים (כללית, מכבי, מאוחדת, לאומית), בתי חולים, מכונים ענקיים (מכון אדלר, ער"ן) או פורטלים ואינדקסים. רק יוצרי תוכן, מאמנים ומטפלים פרטיים ועצמאיים בעברית.
 
 הערה: הנתונים מוערכים (אין API ציבורי לאנליטיקות אורגניות של אחרים). סמן הערכות כשצריך.
 

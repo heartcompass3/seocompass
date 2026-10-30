@@ -21,6 +21,17 @@ export interface CompetitorAnalysis {
   contentStrategy: string;
 }
 
+export interface YourSiteAnalysis {
+  name: string;
+  websiteUrl: string;
+  domainAuthority: number;
+  estimatedTraffic: string;
+  rankingOverview: string;
+  strengths: string[];
+  opportunities: string[];
+  actionPlan: string;
+}
+
 export type SearchIntentType = 'Informational' | 'Transactional' | 'Navigational' | 'Commercial';
 
 export interface KeywordResearchResult {
