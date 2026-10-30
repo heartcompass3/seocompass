@@ -515,7 +515,7 @@ export async function deleteArticleFromFirestore(articleId: string): Promise<voi
  * (real impressions/clicks/position for your verified site).
  *
  * Dormant until you activate the connection (see the commented scope near the
- * top of this file) and set VITE_GSC_SITE_URL (e.g. "sc-domain:heartcompass.vercel.app").
+ * top of this file) and set VITE_GSC_SITE_URL (e.g. "sc-domain:heartcompass.co.il").
  * Reuses the same Google access token obtained during sign-in.
  */
 export async function fetchSearchConsoleData(

@@ -63,7 +63,7 @@ export default function SearchConsoleSection({ googleToken, configured, onConnec
             <p className="font-bold flex items-center gap-1.5 flex-row-reverse justify-end">
               <AlertCircle className="w-4 h-4" /> החיבור לא הוגדר
             </p>
-            <p>הגדר את <span dir="ltr" className="font-mono">VITE_GSC_SITE_URL</span> (למשל <span dir="ltr" className="font-mono">sc-domain:heartcompass.vercel.app</span>) בסביבה, הפעל את "Google Search Console API" ב-Google Cloud, וודא שהאתר מאומת ב-Search Console תחת החשבון שאיתו אתה מתחבר.</p>
+            <p>הגדר את <span dir="ltr" className="font-mono">VITE_GSC_SITE_URL</span> (למשל <span dir="ltr" className="font-mono">sc-domain:heartcompass.co.il</span>) בסביבה, הפעל את "Google Search Console API" ב-Google Cloud, וודא שהאתר מאומת ב-Search Console תחת החשבון שאיתו אתה מתחבר.</p>
           </div>
         )}
 

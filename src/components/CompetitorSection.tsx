@@ -9,7 +9,7 @@ interface CompetitorSectionProps {
 }
 
 export default function CompetitorSection({ onAnalyze, loading, competitors }: CompetitorSectionProps) {
-  const [targetUrl, setTargetUrl] = useState('https://heartcompass.vercel.app');
+  const [targetUrl, setTargetUrl] = useState('https://www.heartcompass.co.il');
   const [topic, setTopic] = useState('הדרכת הורים ואימון רגשי לנוער');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -39,7 +39,7 @@ export default function CompetitorSection({ onAnalyze, loading, competitors }: C
                   type="text" 
                   value={targetUrl}
                   onChange={(e) => setTargetUrl(e.target.value)}
-                  placeholder="למשל: https://heartcompass.vercel.app" 
+                  placeholder="למשל: https://www.heartcompass.co.il" 
                   className="w-full text-right bg-slate-50 hover:bg-slate-100/50 focus:bg-white text-slate-800 text-sm pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
                   id="competitor-url"
                 />
