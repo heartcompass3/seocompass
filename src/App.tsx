@@ -227,6 +227,8 @@ export default function App() {
   const [articleLoading, setArticleLoading] = useState(false);
 
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [keywordError, setKeywordError] = useState<string | null>(null);
+  const [competitorError, setCompetitorError] = useState<string | null>(null);
 
   // Load which manual connection slots are wired (Gemini / SerpApi / Search Console)
   useEffect(() => {
@@ -364,6 +366,7 @@ export default function App() {
   // 1. Competitor Analysis Fetch caller
   const handleAnalyzeCompetitors = async (targetUrl: string, topic: string, append = false) => {
     setCompetitorsLoading(true);
+    setCompetitorError(null);
     setNotification(null);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
@@ -392,6 +395,7 @@ export default function App() {
       clearTimeout(timeoutId);
       console.error(err);
       const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'ניתוח המתחרים נכשל.');
+      setCompetitorError(msg);
       setNotification({ type: 'error', message: msg });
     } finally {
       setCompetitorsLoading(false);
@@ -401,6 +405,7 @@ export default function App() {
   // 2. Keyword Research Fetch caller
   const handleSearchKeywords = async (seedKeyword: string, topic: string, append = false) => {
     setKeywordsLoading(true);
+    setKeywordError(null);
     setNotification(null);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
@@ -421,7 +426,7 @@ export default function App() {
 
       if (data.keywords && Array.isArray(data.keywords)) {
         setKeywords((prev) => (append ? [...prev, ...data.keywords] : data.keywords));
-        setNotification({ type: 'success', message: append ? 'נוספו מילות מפתח חדשות לרשימה.' : 'מחקר מילות המפתח המותאמות לגוגל הושלם בהרחבה.' });
+        setNotification({ type: 'success', message: append ? 'נוספו מילות מפתח חדשות לרשימה.' : `מחקר מילות המפתח עבור "${seedKeyword}" הושלם בהרחבה.` });
       } else {
         throw new Error('התקבל פורמט לא תקין מהשרת.');
       }
@@ -429,6 +434,7 @@ export default function App() {
       clearTimeout(timeoutId);
       console.error(err);
       const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'חיפוש מילות מפתח נכשל. נסה שוב.');
+      setKeywordError(msg);
       setNotification({ type: 'error', message: msg });
     } finally {
       setKeywordsLoading(false);
@@ -707,6 +713,7 @@ export default function App() {
               loading={keywordsLoading}
               keywords={keywords}
               onSelectKeywordForArticle={linkKeywordToWriter}
+              error={keywordError}
             />
           )}
 

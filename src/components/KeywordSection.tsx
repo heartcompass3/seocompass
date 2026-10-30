@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { KeywordResearchResult, SearchIntentType } from '../types';
-import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp, Plus } from 'lucide-react';
+import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp, Plus, AlertCircle } from 'lucide-react';
 
 interface KeywordSectionProps {
   onSearch: (seedKeyword: string, topic: string, append?: boolean) => Promise<void>;
   loading: boolean;
   keywords: KeywordResearchResult[];
   onSelectKeywordForArticle: (keyword: string) => void;
+  error?: string | null;
 }
 
-export default function KeywordSection({ onSearch, loading, keywords, onSelectKeywordForArticle }: KeywordSectionProps) {
-  const [seedKeyword, setSeedKeyword] = useState('אימון רגשי לנוער');
-  const [topic, setTopic] = useState('הדרכת הורים');
+export default function KeywordSection({ onSearch, loading, keywords, onSelectKeywordForArticle, error }: KeywordSectionProps) {
+  const [seedKeyword, setSeedKeyword] = useState('');
+  const [topic, setTopic] = useState('');
   const [intentFilter, setIntentFilter] = useState<string>('All');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -113,6 +114,13 @@ export default function KeywordSection({ onSearch, loading, keywords, onSelectKe
             </button>
           </div>
         </form>
+
+        {error && (
+          <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs text-right flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+            <span>{error}</span>
+          </div>
+        )}
       </div>
 
       {/* Loading Skeletal */}

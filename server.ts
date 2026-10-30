@@ -369,22 +369,34 @@ app.post("/api/seo/search-keywords", async (req, res) => {
       // ignore
     }
 
-    const prompt = `אתה אסטרטג SEO בכיר ומומחה למחקר מילות מפתח אורגניות בגוגל ישראל עבור המותג "מצפן הלב" (יוסי מדלסי · מומחה לשחרור דפוסים, הדרכת הורים למתבגרים, אימון רגשי לנוער ומשברי גיל ההתבגרות).
+    const prompt = `אתה אלגוריתם מחקר מילות מפתח וכלי SEO מקצועי (בדומה ל-Ahrefs / Google Keyword Planner) המיועד לגוגל ישראל (Google.co.il).
 
-בצע מחקר מילות מפתח מעמיק, ממוקד ומניב עבור:
-ביטוי בסיס / מילת מפתח ראשית: "${seedKeyword}"
-נושא נלווה: "${topic || "הדרכת הורים למתבגרים, אימון רגשי לנוער ושחרור דפוסים"}"${serpKeywords}${excludeNote}
+ביטוי המפתח הראשי / מילת הזרע למחקר (Seed Keyword): "${seedKeyword}"
+${topic ? `נישה / הקשר ספציפי: "${topic}"` : ""}
+${serpKeywords}
+${excludeNote}
 
-חוקי ברזל מחייבים לרלוונטיות (Relevance Hard Rules):
-1. **התאמה מלאה למצפן הלב:** כל מילות המפתח המוצעות חייבות לייצג שאלות, מצוקות וכוונות חיפוש של הורים ונוער המחפשים מענה רגשי, הדרכה, ויסות רגשי, שחרור דפוסים, התמודדות עם התפרצויות זעם, ניכור, חרדות חברתיות, משברי גיל ההתבגרות וקשר משפחתי.
-2. **איסור מוחלט על נושאים לא רלוונטיים:** אסור בתכלית האיסור לכלול ביטויים בירוקרטיים (הסכמי גירושין, ביטוח לאומי, מענקים), לימודיים-טכניים (בגרויות, משרד החינוך, ציונים), הגדרות ביולוגיות של ספרי לימוד, או טיפולים תרופתיים/פסיכיאטריים.
-3. **כוונות חיפוש אמיתיות:** התמקד בביטויי זנב ארוך (Long-tail) שהורים או צעירים באמת מקלידים כשהם חווים קושי ומחפשים ליווי או פתרון מעשי (Commercial, Transactional, High-Value Informational).
-4. **מדדים מציאותיים לשוק הישראלי:** נפחי חיפוש ועלויות קליק ריאליים לגוגל ישראל.
+חוקי ברזל מחייבים למחקר מילות המפתח (Strict Generation Rules):
+1. **זיקה ישירה ובלעדית לביטוי הנחקר ("${seedKeyword}"):**
+   כל 8-10 מילות המפתח המוצעות חייבות להיות וריאציות ישירות, שאלות נפוצות של ישראלים (PAA), ביטויי זנב ארוך (Long-tail), או הרחבות חיפוש מעשיות שמכילות או נגזרות ישירות מתוך "${seedKeyword}".
+   (למשל: אם נחקר "חשיבת יתר" - כל המילים חייבות לעסוק ישירות בחשיבת יתר, אוברטינקינג, שחרור מחשבות טורדניות, חשיבת יתר בלילה/בזוגיות/מול חרדות וכו').
+2. **איסור מוחלט על סטייה מהנושא:**
+   אסור בשום אופן להחליף את "${seedKeyword}" בנושא אחר, ואסור להחזיר רשימה קבועה שאינה ממוקדת במדויק ב-"${seedKeyword}".
+3. **כוונות חיפוש מגוונות (Search Intent):**
+   - שאלות "איך..." ו-"למה..." (Informational).
+   - חיפושי פתרון, תרגילים, טיפול וכלים מעשיים (Commercial / Transactional).
+   - שילובים של המונח עם מצבים נפוצים (בלילה, בבוקר, בזוגיות, אצל מתבגרים, בעבודה).
+4. **מדדים מציאותיים ומגוונים לגוגל ישראל:**
+   - נפח חיפוש חודשי (Search Volume): מספרים ריאליים ומגוונים (למשל 480, 890, 1600, 2400).
+   - רמת קושי (Difficulty): מספר בין 10 ל-70.
+   - עלות לקליק (CPC): מחיר ממוצע ריאלי בדולרים (USD).
+   - חישוב מדד יעילות KEI.
+   - המלצה אסטרטגית קונקרטית ספציפית לכל ביטוי.
 
 החזר אך ורק מערך JSON תקין המכיל בדיוק 8-10 מילות מפתח במבנה הבא:
 [
   {
-    "keyword": "מילת המפתח המוצעת בעברית",
+    "keyword": "ביטוי מדויק בעברית הנגזר ישירות מתוך ${seedKeyword}",
     "searchVolume": 1400,
     "difficulty": 32,
     "cpc": 2.80,
@@ -392,7 +404,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
     "kei": 24.5,
     "seoValue": "High" | "Medium" | "Low",
     "relevanceToTopic": 10,
-    "suggestedAction": "המלצה אסטרטגית קונקרטית בעברית"
+    "suggestedAction": "המלצה אסטרטגית קונקרטית בעברית עבור ביטוי זה"
   }
 ]`;
 
@@ -400,7 +412,7 @@ app.post("/api/seo/search-keywords", async (req, res) => {
       model: sanitizeModel(process.env.KEYWORD_MODEL || "gemini-3.8-flash"),
       contents: prompt,
       config: {
-        systemInstruction: "You are an elite Israeli SEO strategist specialized in emotional coaching and parenting keywords for 'מצפן הלב'. You output strictly valid JSON with realistic metrics and 100% niche relevance.",
+        systemInstruction: `You are an elite keyword research engine for Google Israel. You MUST generate keyword variations, long-tail phrases, and search queries strictly centered around the user's specific seed keyword: "${seedKeyword}". Never substitute it with a generic topic. Output strictly valid JSON.`,
         responseMimeType: "application/json",
       },
     });
