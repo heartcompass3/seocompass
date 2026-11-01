@@ -92,13 +92,14 @@ function QualityChecks({ article }: { article: GeneratedArticle }) {
 
   const metaTitleLen = (article.metaTitle || '').length;
   const metaDescLen = (article.metaDescription || '').length;
-  const kw = (article.keyword || '').trim();
-  const kwInTitle = !!kw && (article.title || '').includes(kw);
-  const firstPara = content
+  const kw = (article.keyword || '').trim().toLowerCase();
+  const titleLower = (article.title || '').toLowerCase();
+  const kwInTitle = !!kw && titleLower.includes(kw);
+  const firstPara = (content
     .split('\n')
     .map((s) => s.trim())
-    .find((s) => s && !s.startsWith('#') && !s.startsWith('*') && !s.startsWith('-'));
-  const kwInFirst = !!kw && !!firstPara && firstPara.includes(kw);
+    .find((s) => s && !s.startsWith('#') && !s.startsWith('*') && !s.startsWith('-')) || '').toLowerCase();
+  const kwInFirst = !!kw && !!firstPara && (firstPara.includes(kw) || kw.split(/\s+/).filter(w => w.length > 2).every(word => firstPara.includes(word)));
 
   const lenColor = (len: number, min: number, max: number) =>
     len === 0 ? 'text-slate-400' : len > max ? 'text-rose-600' : len < min ? 'text-amber-600' : 'text-emerald-600';
@@ -213,11 +214,6 @@ export default function ArticleSection({
   const [pushingToSanity, setPushingToSanity] = useState(false);
   const [sanityPushResult, setSanityPushResult] = useState<{ draftId: string; studioUrl: string } | null>(null);
   const [sanityPushError, setSanityPushError] = useState('');
-
-  // Cannibalization Guard States
-  const [cannibalizationLoading, setCannibalizationLoading] = useState(false);
-  const [cannibalizationResult, setCannibalizationResult] = useState<CannibalizationCheckResult | null>(null);
-  const [cannibalizationError, setCannibalizationError] = useState('');
 
   // 360 Campaign States
   const [campaignLoading, setCampaignLoading] = useState(false);
@@ -461,30 +457,6 @@ ${list}
     }
   };
 
-  const handleCheckCannibalization = async () => {
-    if (!keyword.trim()) return;
-    setCannibalizationLoading(true);
-    setCannibalizationError('');
-    try {
-      const res = await fetch('/api/seo/check-cannibalization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          keyword: keyword.trim(),
-          existingSlug: generatedArticle?.urlSlug || generatedArticle?.slug,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'בדיקת קניבליזציה נכשלה');
-      setCannibalizationResult(data);
-    } catch (err: any) {
-      console.error(err);
-      setCannibalizationError(err.message || 'שגיאת תקשורת בבדיקת קניבליזציה');
-    } finally {
-      setCannibalizationLoading(false);
-    }
-  };
-
   const handleGenerate360Campaign = async () => {
     if (!generatedArticle) return;
     setCampaignLoading(true);
@@ -536,132 +508,14 @@ ${list}
                 />
                 <span className="text-[10px] text-slate-400 mt-1">מילת המפתח תוטמע בכותרת, בכותרות המשנה, ובפסקה הראשונה</span>
 
-                {/* Cannibalization Guard Action & Feedback */}
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={handleCheckCannibalization}
-                    disabled={cannibalizationLoading || !keyword.trim()}
-                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                    title="בדוק האם מילת מפתח זו כבר מכוסה במאמר קיים באתר ותמנע פגיעה בדירוגים"
-                  >
-                    {cannibalizationLoading ? (
-                      <>
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        <span>בודק מול 169+ מאמרים...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>בדוק קניבליזציה מול האתר</span>
-                      </>
-                    )}
-                  </button>
-                  {cannibalizationResult && (
-                    <span className="text-[10px] font-semibold text-slate-400">
-                      נבדקו {cannibalizationResult.articlesChecked} מאמרים
-                    </span>
-                  )}
+                {/* Automatic Anti-Cannibalization Shield Status Indicator */}
+                <div className="mt-2.5 flex items-center justify-between text-[11px] text-indigo-700 bg-indigo-50/80 border border-indigo-200/60 rounded-xl px-3 py-2">
+                  <div className="flex items-center gap-2 flex-row-reverse">
+                    <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span className="font-medium">מגן קניבליזציה פעיל אוטומטית (נבדק מול כל מאמרי האתר בעת הכתיבה)</span>
+                  </div>
+                  <span className="text-[10px] text-indigo-500 font-bold shrink-0">170+ מאמרים</span>
                 </div>
-
-                {cannibalizationError && (
-                  <div className="mt-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-[11px] text-right">
-                    {cannibalizationError}
-                  </div>
-                )}
-
-                {cannibalizationResult && (
-                  <div className={`mt-2 p-3 rounded-xl border text-xs space-y-2.5 transition-all text-right ${
-                    cannibalizationResult.overlapDetected
-                      ? 'bg-amber-50/90 border-amber-300 text-amber-950'
-                      : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  }`}>
-                    <div className="flex items-center justify-between gap-2 flex-row-reverse">
-                      <div className="flex items-center gap-1.5 font-bold flex-row-reverse">
-                        {cannibalizationResult.overlapDetected ? (
-                          <>
-                            <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                            <span>אזהרת קניבליזציה</span>
-                          </>
-                        ) : (
-                          <>
-                            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <span>נקי מקניבליזציה!</span>
-                          </>
-                        )}
-                      </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                        cannibalizationResult.overlapDetected ? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
-                      }`}>
-                        ציון חפיפה: {cannibalizationResult.overlapScore}%
-                      </span>
-                    </div>
-
-                    {cannibalizationResult.overlapDetected ? (
-                      <>
-                        <p className="text-[11px] leading-relaxed text-amber-900">
-                          {cannibalizationResult.recommendation}
-                        </p>
-
-                        {cannibalizationResult.conflictingArticles && cannibalizationResult.conflictingArticles.length > 0 && (
-                          <div className="space-y-1.5 pt-1 border-t border-amber-200">
-                            <span className="text-[10px] font-bold text-amber-800 block">מאמרים קיימים עם חפיפה:</span>
-                            {cannibalizationResult.conflictingArticles.map((art, idx) => (
-                              <div key={idx} className="bg-white/80 p-2 rounded-lg border border-amber-200 text-[11px] space-y-1">
-                                <div className="flex items-center justify-between gap-2 flex-row-reverse">
-                                  <a
-                                    href={`https://www.heartcompass.co.il/articles/${art.slug}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-bold text-blue-700 hover:underline flex items-center gap-1 flex-row-reverse"
-                                  >
-                                    <span>{art.title}</span>
-                                    <ExternalLink className="w-3 h-3 text-blue-500 shrink-0" />
-                                  </a>
-                                  <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
-                                    {art.matchedReason}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {cannibalizationResult.suggestedFocusAngles && cannibalizationResult.suggestedFocusAngles.length > 0 && (
-                          <div className="space-y-1.5 pt-1 border-t border-amber-200">
-                            <span className="text-[10px] font-bold text-amber-900 block">
-                              זוויות מומלצות לבידול (לחץ להטמעה בהנחיות):
-                            </span>
-                            <div className="flex flex-wrap gap-1.5 justify-end">
-                              {cannibalizationResult.suggestedFocusAngles.map((angle, idx) => (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  onClick={() => {
-                                    setGuidelines((prev) =>
-                                      prev
-                                        ? `${prev}\n• זווית מבדלת: ${angle}`
-                                        : `• זווית מבדלת: ${angle}`
-                                    );
-                                  }}
-                                  className="text-[10px] bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg px-2 py-1 transition-all cursor-pointer text-right flex items-center gap-1"
-                                  title="לחץ להוספת זווית זו להנחיות הכתיבה"
-                                >
-                                  <span>+</span>
-                                  <span>{angle}</span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-[11px] leading-relaxed text-emerald-800">
-                        {cannibalizationResult.recommendation || 'מילת המפתח מקורית ולא מתחרה באף אחד מ-169 המאמרים הקיימים באתר. בטוח לייצור!'}
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
 
               <div className="flex flex-col">
@@ -1024,6 +878,62 @@ ${list}
                       }
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* Automatic Cannibalization Guard Banner */}
+              {generatedArticle.cannibalizationGuard && (
+                <div className={`p-4 rounded-2xl border text-right space-y-2.5 transition-all shadow-xs ${
+                  generatedArticle.cannibalizationGuard.overlapDetected
+                    ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                }`}>
+                  <div className="flex items-center justify-between gap-2 flex-row-reverse">
+                    <div className="flex items-center gap-2 font-bold text-xs flex-row-reverse">
+                      {generatedArticle.cannibalizationGuard.overlapDetected ? (
+                        <>
+                          <ShieldAlert className="w-4.5 h-4.5 text-amber-600 shrink-0" />
+                          <span>מגן קניבליזציה: בוצע בידול אוטומטי מול מאמרי האתר</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+                          <span>נקי מקניבליזציה: הנושא ייחודי ואינו מתחרה במאמרי האתר</span>
+                        </>
+                      )}
+                    </div>
+                    <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
+                      generatedArticle.cannibalizationGuard.overlapDetected
+                        ? 'bg-amber-200 text-amber-900'
+                        : 'bg-emerald-200 text-emerald-900'
+                    }`}>
+                      נבדקו {generatedArticle.cannibalizationGuard.articlesChecked || 170}+ מאמרים
+                    </span>
+                  </div>
+
+                  <p className="text-xs leading-relaxed">
+                    {generatedArticle.cannibalizationGuard.recommendation}
+                  </p>
+
+                  {generatedArticle.cannibalizationGuard.conflictingArticles && generatedArticle.cannibalizationGuard.conflictingArticles.length > 0 && (
+                    <div className="pt-2 border-t border-amber-200/80 space-y-1.5">
+                      <span className="text-[10px] font-bold text-amber-900 block">מאמרים קרובים שנמצאו באתר (והמאמר נבדל מהם):</span>
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        {generatedArticle.cannibalizationGuard.conflictingArticles.map((art: any, idx: number) => (
+                          <a
+                            key={idx}
+                            href={`https://www.heartcompass.co.il/articles/${art.slug}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] bg-white/90 hover:bg-white text-blue-700 hover:text-blue-900 font-semibold px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1 flex-row-reverse transition-all shadow-2xs"
+                          >
+                            <span>{art.title}</span>
+                            <ExternalLink className="w-3 h-3 text-blue-500 shrink-0" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

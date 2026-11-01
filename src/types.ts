@@ -132,6 +132,22 @@ export interface GeneratedArticle {
   cta?: ArticleCTA;
   jsonLdSchema?: Record<string, any>; // Generated Schema.org (Article, FAQ, Person)
 
+  // Anti-Cannibalization Guard automatic audit result
+  cannibalizationGuard?: {
+    checked: boolean;
+    articlesChecked: number;
+    overlapDetected: boolean;
+    overlapScore: number;
+    conflictingArticles?: Array<{
+      title: string;
+      slug: string;
+      goldLine?: string;
+      similarityScore: number;
+      reason?: string;
+    }>;
+    recommendation: string;
+  };
+
   // Status flags
   pushedToSanity?: boolean;
   sanityDraftId?: string;

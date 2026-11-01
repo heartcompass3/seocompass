@@ -499,6 +499,119 @@ async function fetchSerpResults(query: string) {
   }
 }
 
+// In-memory cache for Sanity articles catalog to avoid redundant/slow roundtrips
+interface SanityArticleSummary {
+  title: string;
+  slug: string;
+  tags?: string[];
+  excerpt?: string;
+  goldLine?: string;
+}
+
+let sanityArticlesCache: { timestamp: number; articles: SanityArticleSummary[] } | null = null;
+const SANITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min TTL
+
+async function getCachedSanityArticles(): Promise<SanityArticleSummary[]> {
+  const now = Date.now();
+  if (sanityArticlesCache && now - sanityArticlesCache.timestamp < SANITY_CACHE_TTL_MS) {
+    return sanityArticlesCache.articles;
+  }
+
+  const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
+  const dataset = process.env.VITE_SANITY_DATASET || "production";
+  const groq = '*[_type=="article" && defined(slug.current)]{title,"slug":slug.current,tags,excerpt,goldLine}';
+  const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(groq)}`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const articles: SanityArticleSummary[] = Array.isArray(data.result) ? data.result : [];
+      if (articles.length > 0) {
+        sanityArticlesCache = { timestamp: now, articles };
+        return articles;
+      }
+    }
+  } catch (err) {
+    console.warn("[Sanity Cache] Could not refresh cache, falling back to existing cache if any:", err);
+  }
+
+  return sanityArticlesCache?.articles || [];
+}
+
+// Ultra-fast local keyword cannibalization evaluator against published Sanity articles (<2ms)
+function checkCannibalizationLocal(keyword: string, articles: SanityArticleSummary[]) {
+  const cleanKw = String(keyword || "").toLowerCase().trim();
+  const kwTokens = cleanKw
+    .split(/[\s,.-]+/)
+    .filter((t) => t.length >= 2);
+
+  if (kwTokens.length === 0 || articles.length === 0) {
+    return {
+      hasRisk: false,
+      overlapDetected: false,
+      score: 0,
+      overlapScore: 0,
+      articlesChecked: articles.length,
+      matchedArticles: [] as any[],
+      conflictingArticles: [] as any[],
+      suggestedFocusAngles: [
+        `מיקוד בכאב המיידי והמעשי ביומיום סביב "${keyword}"`,
+        `זווית נוירולוגית של חקר המוח והוויסות הרגשי`,
+        `זווית מעשית של תקשורת מקרבת ללא מאבקי כוח`,
+      ],
+      recommendation: "לא נמצאה חפיפה עם מאמרי האתר. הנושא פנוי לכתיבה כמאמר דגל!",
+    };
+  }
+
+  const scored = articles
+    .map((a) => {
+      let matchCount = 0;
+      const text = `${a.title || ""} ${a.excerpt || ""} ${a.goldLine || ""} ${(a.tags || []).join(" ")}`.toLowerCase();
+      kwTokens.forEach((tok) => {
+        if (text.includes(tok)) matchCount += 1;
+      });
+      const similarityScore = Math.round((matchCount / kwTokens.length) * 100);
+      return {
+        title: a.title,
+        slug: a.slug,
+        goldLine: a.goldLine,
+        similarityScore,
+        reason: similarityScore >= 50
+          ? `נמצאה חפיפה ישירה בכותרת או בתקציר מול מילת המפתח (${similarityScore}%)`
+          : `נמצא דמיון סמנטי חלקי בנושא (${similarityScore}%)`,
+      };
+    })
+    .filter((c) => c.similarityScore >= 30)
+    .sort((a, b) => b.similarityScore - a.similarityScore)
+    .slice(0, 3);
+
+  const hasRisk = scored.length > 0;
+  const topScore = hasRisk ? scored[0].similarityScore : 0;
+
+  return {
+    hasRisk,
+    overlapDetected: hasRisk,
+    score: topScore,
+    overlapScore: topScore,
+    articlesChecked: articles.length,
+    matchedArticles: scored,
+    conflictingArticles: scored,
+    suggestedFocusAngles: [
+      `זווית ייחודית 1: התמקדות בפתרון ייעודי עבור "${keyword}" שלא כוסה במאמרים הקיימים`,
+      `זווית ייחודית 2: שילוב דוגמאות מציאותיות ופרקטיות מהשטח סביב "${keyword}"`,
+      `זווית ייחודית 3: פירוק מנגנון מ.ס.ע מותאם בלעדית לנושא זה`,
+    ],
+    recommendation: hasRisk
+      ? `נמצאו ${scored.length} מאמרים קרובים באתר (ציון חפיפה: ${topScore}%). המערכת מחילה מגן קניבליזציה ומבדלת את התוכן במדויק עבור "${keyword}".`
+      : `הנושא נקי מחפיפה מול ${articles.length} מאמרים באתר!`,
+  };
+}
+
 // 1. Competitor Analysis Router
 app.post("/api/seo/analyze-competitors", async (req, res) => {
   try {
@@ -708,118 +821,123 @@ ${excludeNote}
 app.post("/api/seo/generate-article", async (req, res) => {
   try {
     const { keyword, audience, tone, additionalKeywords, guidelines, useSearch, selectedModel } = req.body;
-    if (!keyword) {
+    if (!keyword || !keyword.trim()) {
       return res.status(400).json({ error: "חובה לספק מילת מפתח ראשית לייצור המאמר" });
     }
+
+    const cleanKeyword = String(keyword).trim();
+    const targetAudience = (audience || "").trim() || "נוער ומתבגרים, הורים ומשפחה";
 
     const client = getAIClient();
     const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
 
-    let searchGuidance = "";
-    if (useSearch) {
-      searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך לבצע שאילתות בגוגל על הנושא '${keyword}', ועל שאלות חיפוש עדכניות של הורים/מתבגרים בישראל נכון לשנת 2026 כדי להפיק טקסט מדויק, רלוונטי, ומלא בעובדות ודוגמאות אמיתיות מהמציאות הנוכחית בארץ.`;
+    // 1. Automatic Cannibalization Pre-Check against Sanity Catalog
+    const sanityArticles = await getCachedSanityArticles();
+    const cannibalization = checkCannibalizationLocal(cleanKeyword, sanityArticles);
+
+    let cannibalizationDirective = "";
+    if (cannibalization.hasRisk && cannibalization.matchedArticles.length > 0) {
+      const existingList = cannibalization.matchedArticles
+        .map((m: any) => `- "${m.title}" (סלאג: ${m.slug}) ${m.goldLine ? `— ${m.goldLine}` : ""}`)
+        .join("\n");
+
+      cannibalizationDirective = `
+=======================================================
+מגן קניבליזציה מובנה (Automatic Anti-Cannibalization Shield):
+=======================================================
+באתר "מצפן הלב" כבר קיימים המאמרים הבאים הקרובים לתחום:
+${existingList}
+
+חוקי בידול מחייבים (Strict Content Differentiation):
+1. אסור בשום אופן לשכפל או לחזור על אותה זווית ראייה, אותן כותרות או אותם תרחישים של המאמרים הקיימים הנ"ל!
+2. המאמר החדש חייב להתמקד אך ורק ובאופן מובהק בנושא ובמילת המפתח הספציפית: "${cleanKeyword}"!
+3. עליך לייצר זווית תוכן חדשה, מרעננת ומובחנת שמשלימה את המאמרים הקיימים ולא מתחרה בהם בגוגל.`;
     }
 
-    const prompt = `כתוב מאמר עומק מותאם למנועי חיפוש ו-AI (גוגל, Gemini, ChatGPT, Perplexity) עבור אתר "מצפן הלב" של יוסי מדלסי (https://www.heartcompass.co.il).
-מילת מפתח ראשית: ${keyword}
-קהל יעד: ${audience || "הורים למתבגרים, נוער, וזוגות"}
-סגנון כתיבה (Tone): ${tone || "סמכותי וחברי בו זמנית, אדם שעבר, בגובה העיניים, סקרן, אנושי"}
-מילות מפתח נוספות לשילוב: ${additionalKeywords || "ללא מילות מפתח נוספות"}
-הנחיות מיוחדות מהלקוח: ${guidelines || "אין משהו מיוחד"}${searchGuidance}
+    let searchGuidance = "";
+    if (useSearch) {
+      searchGuidance = `\nהערה קריטית: מופעל כעת חיפוש רשת חי (Google Search Grounding). חובה עליך לבצע שאילתות בגוגל על הנושא '${cleanKeyword}', ועל שאלות חיפוש עדכניות של הורים/מתבגרים בישראל נכון לשנת 2026 כדי להפיק טקסט מדויק, רלוונטי, ומלא בעובדות ודוגמאות אמיתיות מהמציאות הנוכחית בארץ.`;
+    }
+
+    const prompt = `אתה כותב מאמר עומק מותאם למנועי חיפוש ו-AI (גוגל, Gemini, ChatGPT, Perplexity) עבור אתר "מצפן הלב" של יוסי מדלסי (https://www.heartcompass.co.il).
 
 =======================================================
-מקור האמת: דוקטרינת "מערכת הצמיחה" של מצפן הלב
+חוק ברזל עליון (Top Priority): היצמדות מוחלטת לנושא ולמילת המפתח
 =======================================================
-1. תפיסת העולם והבידול המרכזי:
-- "אנשים לא נתקעים כי חסר להם ידע (בעידן ה-AI יש לכולם פסיכולוג בכיס וכל תשובה בעולם), אלא כי פחדים, אמונות ודפוסים שנוצרו פעם כדי להגן ממשיכים לנהל את הבחירות שלהם."
-- "המוח מעדיף את הסבל המוכר על פני אי-הוודאות של שקט."
-- שורש מול סימפטום: התנהגות קשה, הסתגרות בחדר, מסכים, שקרים, מאבקי כוח, חרדות או ציונים ירודים הם לא הבעיה האמיתית. הם הסימפטום והפתרון ההישרדותי שהמוח מצא כדי לשמור על האדם מפגיעה. לכן אנחנו לא מנסים 'לתקן את הילד בכוח', אלא מזהים על מה הדפוס מגן ומשנים את המערכת והשפה.
+נושא המאמר הבלעדי ומילת המפתח הראשית היא אך ורק: "${cleanKeyword}"!
+קהל היעד המוגדר: "${targetAudience}".
+סגנון כתיבה (Tone): ${tone || "סמכותי וחברי בו זמנית, בגובה העיניים, סקרן, אנושי"}
+${additionalKeywords ? `מילות מפתח נוספות לשילוב: ${additionalKeywords}` : ""}
+${guidelines ? `הנחיות מיוחדות מהלקוח: ${guidelines}` : ""}
+${searchGuidance}
+${cannibalizationDirective}
 
-2. נוסחת חמשת השלבים של שיטת מ.ס.ע (חובה למבנה גוף המאמר):
-- פתיחה (ללא כותרת H2): מה הילד עושה / מה האדם חווה (הסימפטום). תרחיש ספציפי, מציאותי וכואב מהיומיום (100-150 מילים).
-- H2 ראשון (שלב ה-מ': מיפוי): מה זה מפעיל בהורה / בנו ("הילד שבתוך ההורה"). למה אנחנו נבהלים מההסתגרות שלו? למה חייבים לשלוט? חיבור פסיכולוגי/נוירולוגי עדין.
-- H2 שני (שלב ה-ס': סילוק): למה אנחנו מגיבים ככה. חקירת הסיפור שהמוח מספר לעצמו ("אם הוא נכשל אני נכשלתי?"). פירוק אמונות מגבילות שירשנו מהילדות. (שים לב: אין שלב סלילה בשיטה! השלבים הם אך ורק: מיפוי, סילוק, עצמאות).
-- H2 שלישי: מה הילד לומד על עצמו מהתגובה הזו (הזהות המתעצבת מול תגובת ההורים).
-- H2 רביעי (שלב ה-ע': עצמאות): איך מ.ס.ע משנה את כל המעגל. מעבר מפעולה מתוך פחד לפעולה מתוך מה שהילד באמת צריך. כלים מעשיים לעצירת הלופ.
-- סיום משמעותי: הבטחה מותגית ושאלת זהות פתוחה שנשארת עם הקורא בגוף. לעולם ללא CTA שיווקי קר ("צרו קשר עכשיו") בגוף הטקסט!
+איסור מוחלט על סטייה או החלפת נושא:
+- אסור בשום פנים ואופן לכתוב מאמר כללי על "אימון רגשי לנוער" או "סערות רגשיות" אלא אם זו מילת המפתח המפורשת שהוזנה!
+- המאמר חייב לעסוק ב-100% ישירות בנושא "${cleanKeyword}"! אם הנושא הוא למשל סדנה, לחץ חברתי, חרדה, חשיבת יתר, או כל נושא אחר, המאמר כולו מוקדש ספציפית לנושא זה.
 
-3. חמש האוטוריטות המחקריות המאושרות (שלב לפחות מושג/ממצא אחד מובלע בעדינות):
-- פרופ' חיים עומר: סמכות מעגנת, נוכחות הורית שקטה, הימנעות מ"מלכוד ההסברים", "להכות בברזל כשהוא קר".
-- ד"ר דן סיגל: המוח הדו-קומתי, היפוך המוח (Flipping the lid), ויסות רגשי משותף (Co-regulation).
-- אלפרד אדלר: הצורך בשייכות ומשמעות, מאבק כוח כמטרה מוטעית של מתבגר מיואש, עידוד מול שבח.
-- דונלד ויניקוט: ההורה הטוב דיו (Good enough parent), החזקה רגשית (Holding), הישרדות ההורה מול תוקפנות המתבגר.
-- ד"ר מרשל רוזנברג: תקשורת לא-אלימה (NVC), שפת הג'ירפה מול שפת התן, התנהגות קשה כביטוי טרגי של צורך לא מסופק.
+הנחיות קריטיות לכותרות ולפתיחה:
+1. כותרת המאמר (title): שאלת חיפוש ישירה ואטרקטיבית שישראלים מקלידים (עד 70 תווים), הכוללת במפורש את המילים "${cleanKeyword}".
+2. כותרת SEO (metaTitle): כותרת SEO חזקה (עד 60 תווים) הכוללת את "${cleanKeyword}" ומסתיימת ב-| מצפן הלב.
+3. פסקת הפתיחה של המאמר: חייבת לפתוח בסיפור חי ואותנטי מהיומיום סביב "${cleanKeyword}" ולכלול במפורש את מילת המפתח "${cleanKeyword}" כבר בשני המשפטים הראשונים!
 
-4. חוקי הברזל לשפה ולסגנון (עברית נקייה ללא סימני AI):
-- אסור מוחלט על מקפים ארוכים (—) בשום צורה. השתמש בנקודה, פסיק, נקודתיים או סוגריים.
-- אסור מרכאות סרק (Scare quotes) סביב מילים (לא 'דווקא', לא 'נכון').
-- אסור פתיחות נוסחתיות וקלישאות ("בעידן המודרני", "בעולם של היום", "רבים מאיתנו", "כולנו מכירים", "האם גם אתם").
+יישום שלבי שיטת מ.ס.ע עבור "${cleanKeyword}":
+- פתיחה (ללא כותרת H2): מה האדם/הנער חווה סביב "${cleanKeyword}" (הסימפטום והכאב היומיומי, 100-150 מילים).
+- H2 ראשון (שלב ה-מ': מיפוי): מה קורה מתחת לפני השטח סביב "${cleanKeyword}"? איזה מנגנון פנימי ורגשי זה מפעיל?
+- H2 שני (שלב ה-ס': סילוק): למה אנחנו מגיבים או פועלים כך סביב "${cleanKeyword}"? פירוק הסיפור והאמונות המגבילות (אין שלב סלילה בשיטה! השלבים הם: מיפוי, סילוק, עצמאות).
+- H2 שלישי: המשמעות של הדפוס והזהות המתעצבת מול "${cleanKeyword}".
+- H2 רביעי (שלב ה-ע': עצמאות): איך שיטת מ.ס.ע יוצרת דרך פעולה חדשה וכלים מעשיים לשחרור הדפוס ולצמיחה סביב "${cleanKeyword}".
+- סיום: הבטחה מותגית ושאלת זהות עמוקה. לעולם ללא CTA שיווקי קר בגוף הטקסט!
+
+חוקי שפה וסגנון (קול המותג - מצפן הלב):
+- אסור מוחלט על מקפים ארוכים (—). השתמש בנקודה, פסיק, נקודתיים או סוגריים.
+- אסור מרכאות סרק (Scare quotes) סביב מילים.
+- אסור פתיחות נוסחתיות וקלישאות ("בעידן המודרני", "בעולם של היום", "רבים מאיתנו", "כולנו מכירים").
 - אסור מילות AI: "מהווה", "להוות", "משמש כ", "הינו/הינה", "מתאפיין ב", "לייצר ערך/קשר/תחושה", "חשוב לציין", "יש לציין", "ראוי להדגיש".
-- אסור "בנוסף" / "יתרה מכך" בראש פסקאות.
-- שורת מחבר: "יוסי מדלסי · מומחה לשחרור דפוסים" (עם נקודה אמצעית).
+- שלב לפחות מושג/ממצא אחד מובלע בעדינות מ-5 האוטוריטות: פרופ' חיים עומר, ד"ר דן סיגל, אלפרד אדלר, דונלד ויניקוט, ד"ר מרשל רוזנברג.
+- שורת מחבר: "יוסי מדלסי · מומחה לשחרור דפוסים".
 
-=======================================================
-התאמה למנועי חיפוש ו-GEO (Generative Engine Optimization 2026):
-=======================================================
-- title: שאלת חיפוש ישירה שישראלים מקלידים (עד 70 תווים), הכוללת את מילת המפתח.
-- goldLine: שורת מסגור אחת קצרה ומסקרנת של המנגנון (עד 12 מילים).
-- excerpt: תקציר ענייני ומדויק של 150-160 תווים לגוגל ולכרטיס באתר.
-- aiCitation: משפט הגדרה עצמאי אחד וחד, המשלב מחקר ומספרים, שמנועי AI (גוגל AI Overviews, Gemini, Perplexity) ישלפו כתשובה מלאה.
-- disambiguatingDescription: 2-4 משפטים המסבירים לזחלני AI בדיוק במה המאמר עוסק ובמה הוא אינו עוסק.
-- keyTakeaways: כותרת ו-4-5 נקודות תמציתיות של תובנות מהירות ל-Featured Snippets.
-- painTags: 4-6 מילות מפתח וכאבים מדויקים בעברית.
-- searchPhrases: 5-7 ביטויי ושאלות Long-tail שאנשים מחפשים בפועל.
-- domain: אחד מתוך: "parents", "youth", "personal", "relationships".
-- contentRole: "supporting" (ברירת מחדל), "pillar", או "money".
-- searchIntent: "informational" (ברירת מחדל), "commercial", או "transactional".
-- insightPlacement: קטגוריה ועוגן רשמי מהאתר בלבד (למשל: parents -> "הדפוסים והתגובות שלי כהורה" עם קטגוריית משנה "גבולות, מריבות ושגרה בבית").
-- sources: 3-4 מקורות אקדמיים/מחקריים איכותיים.
-- cta: בלוק קריאה לפעולה מלא הכולל וואטסאפ ליוסי: https://wa.me/972544580285.
-- jsonLdSchema: סכמת Schema.org מלאה ב-JSON-LD (@graph המכיל Article, FAQPage ו-Person של יוסי מדלסי).
-
-החזר את התוצאה אך ורק במבנה ה-JSON הבא (ללא טקסט עודף מחוץ ל-JSON):
+החזר אך ורק אובייקט JSON תקין ומלא במבנה הבא (ללא טקסט עודף מחוץ ל-JSON):
 {
   "id": "art_${Date.now()}",
-  "keyword": "${keyword}",
-  "title": "כותרת בנוסח שאלת חיפוש אמיתית (עד 70 תווים)",
-  "goldLine": "תת-כותרת המנגנון, משפט אחד חד עד 12 מילים",
-  "metaTitle": "כותרת SEO עד 60 תווים | מצפן הלב",
-  "metaDescription": "תיאור מטא ענייני ומניע לפעולה עד 155 תווים",
-  "excerpt": "תקציר ענייני של 150-160 תווים לכרטיס באתר ולגוגל",
+  "keyword": "${cleanKeyword}",
+  "title": "שאלת חיפוש אמיתית הכוללת את '${cleanKeyword}' (עד 70 תווים)",
+  "goldLine": "שורת מסגור אחת קצרה ומסקרנת של המנגנון סביב '${cleanKeyword}' (עד 12 מילים)",
+  "metaTitle": "כותרת SEO עד 60 תווים הכוללת את '${cleanKeyword}' | מצפן הלב",
+  "metaDescription": "תיאור מטא ענייני ומניע לפעולה הכולל את '${cleanKeyword}' עד 155 תווים",
+  "excerpt": "תקציר ענייני סביב '${cleanKeyword}' של 150-160 תווים לכרטיס באתר ולגוגל",
   "urlSlug": "english-keyword-slug-with-hyphens",
   "authorLine": "יוסי מדלסי · מומחה לשחרור דפוסים",
-  "imageAlt": "תיאור אלט אמפתי ומדויק לתמונה הראשית כולל מילת המפתח",
-  "tags": ["הורות", "נוער"],
-  "domain": "parents",
+  "imageAlt": "תיאור אלט אמפתי ומדויק לתמונה הראשית כולל '${cleanKeyword}'",
+  "tags": ["נוער", "אימון רגשי"],
+  "domain": "youth",
   "contentRole": "supporting",
   "searchIntent": "informational",
-  "painTags": ["כאב 1", "מילת חיפוש 2", "חרדה 3", "דפוס 4"],
-  "disambiguatingDescription": "מאמר זה עוסק ב... מיועד ל... ואינו עוסק ב...",
+  "painTags": ["כאב 1", "חיפוש 2", "דפוס 3"],
+  "disambiguatingDescription": "מאמר זה עוסק ב... ואינו עוסק ב...",
   "keyTakeaways": {
     "heading": "מה תלמדו במאמר",
-    "items": ["נקודה מפתח 1", "נקודה 2", "נקודה 3", "נקודה 4"]
+    "items": ["נקודת מפתח 1", "נקודה 2", "נקודה 3", "נקודה 4"]
   },
-  "aiCitation": "משפט תשובה עצמאי מלא עם נתוני מחקר ומספרים לציטוט ב-AI Overviews",
+  "aiCitation": "משפט הגדרה עצמאי מלא עם מחקר לציטוט ב-AI Overviews עבור '${cleanKeyword}'",
   "aiContext": "הקשר נוסף למנועי AI אודות קהל היעד והמסגרת המחקרית",
   "searchPhrases": ["שאילתת זנב ארוך 1?", "איך להתמודד עם 2?", "למה קורה 3?"],
   "relatedToMethod": false,
   "insightPlacement": {
-    "domain": "parents",
-    "category": "הדפוסים והתגובות שלי כהורה",
-    "secondary": [
-      { "domain": "parents", "category": "גבולות, מריבות ושגרה בבית" }
-    ]
+    "domain": "youth",
+    "category": "התמודדות ודפוסים אישיים",
+    "secondary": []
   },
   "wordCount": 950,
   "outline": [
     { "sectionTitle": "כותרת ביניים המנגנון", "description": "תמצית קצרה" }
   ],
-  "content": "גוף המאמר המלא לפי 5 השלבים של מ.ס.ע בפורמט Markdown...",
-  "bodyHtml": "אותו גוף מאמר בדיוק כ-HTML עם dir=\\"rtl\\" בכל בלוק (<p dir=\\"rtl\\">, <h2 dir=\\"rtl\\">), בלי מקפים ארוכים, מוכן לסאניטי",
+  "content": "גוף המאמר המלא לפי שלבי מ.ס.ע סביב '${cleanKeyword}' בפורמט Markdown...",
+  "bodyHtml": "אותו גוף מאמר כ-HTML עם dir=\\"rtl\\" בכל בלוק, בלי מקפים ארוכים, מוכן לסאניטי",
   "faqs": [
-    { "question": "שאלה 1: הגדרה בסיסית?", "answer": "תשובה ישירה" },
-    { "question": "שאלה 2: האם ניתן לשנות/ללמוד את זה?", "answer": "תשובה" },
-    { "question": "שאלה 3: שאלת כאב ספציפית שההורה שואל ב-2 בלילה?", "answer": "תשובה אנושית ישירה" },
+    { "question": "שאלה 1 סביב '${cleanKeyword}'?", "answer": "תשובה ישירה" },
+    { "question": "שאלה 2?", "answer": "תשובה" },
+    { "question": "שאלה 3 שהקורא שואל ב-2 בלילה?", "answer": "תשובה אנושית" },
     { "question": "שאלה 4: מה עושים צעד ראשון מעשי?", "answer": "תשובה מעשית" }
   ],
   "sources": [
@@ -834,9 +952,9 @@ app.post("/api/seo/generate-article", async (req, res) => {
     }
   ],
   "cta": {
-    "heading": "רוצים להבין מה קורה עם הילד שלכם?",
-    "text": "שיחה אישית אחת יכולה לשנות את כל הדינמיקה בבית ולהחזיר את הרוגע לקשר.",
-    "buttonLabel": "אני רוצה להבין מה קורה עם הילד שלי",
+    "heading": "רוצים ליווי אישי סביב ${cleanKeyword}?",
+    "text": "שיחה אישית אחת יכולה לפתוח דלת לשינוי אמיתי ולהחזיר את הביטחון והרוגע.",
+    "buttonLabel": "אני רוצה לדבר על זה עם יוסי",
     "buttonHref": "https://wa.me/972544580285"
   },
   "seoTips": ["טיפ אופטימיזציה לדירוג", "טיפ לקישור פנימי"],
@@ -868,7 +986,7 @@ app.post("/api/seo/generate-article", async (req, res) => {
 }`;
 
     const config: any = {
-      systemInstruction: "You are Yossi Medalsi's elite content architect and GEO/SEO strategist for the Israeli brand 'מצפן הלב' (HeartCompass - https://www.heartcompass.co.il). You master the M.S.A method (Mapping, Clearing, Independence) and write emotionally precise, research-grounded Hebrew articles in his voice: story first, semantic GEO layer second. You strictly avoid em-dashes, formulaic openings, and AI cliché words.",
+      systemInstruction: `You are Yossi Medalsi's elite content architect and GEO/SEO strategist for the Israeli brand 'מצפן הלב' (HeartCompass). You MUST write the article strictly and exclusively centered on the user's specific seed topic: "${cleanKeyword}". Never drift into generic coaching or replace the user's topic with a default subject. You master the M.S.A method, avoid em-dashes, and output valid JSON.`,
       responseMimeType: "application/json"
     };
 
@@ -879,8 +997,23 @@ app.post("/api/seo/generate-article", async (req, res) => {
     });
 
     const resultText = response.text || "{}";
-    const data = parseJSONResponse(resultText);
-    res.json({ article: data });
+    const parsed = parseJSONResponse(resultText);
+
+    // Guaranteed canonical properties and cannibalization audit results attached
+    const finalArticle = {
+      ...parsed,
+      keyword: cleanKeyword,
+      cannibalizationGuard: {
+        checked: true,
+        articlesChecked: cannibalization.articlesChecked,
+        overlapDetected: cannibalization.hasRisk,
+        overlapScore: cannibalization.score,
+        conflictingArticles: cannibalization.matchedArticles,
+        recommendation: cannibalization.recommendation,
+      },
+    };
+
+    res.json({ article: finalArticle });
   } catch (error: any) {
     console.error("Error in generate-article:", error);
     res.status(500).json({ error: friendlyError(error) });
@@ -1286,104 +1419,19 @@ app.post("/api/seo/internal-links", async (req, res) => {
   }
 });
 
-// 9. Cannibalization Guard Router — checks new keyword against all published Sanity articles
+// 9. Cannibalization Guard Router — checks new keyword against all published Sanity articles (ultra-fast cached)
 app.post("/api/seo/check-cannibalization", async (req, res) => {
   try {
-    const { keyword, topic } = req.body;
-    if (!keyword) {
+    const { keyword } = req.body;
+    if (!keyword || !String(keyword).trim()) {
       return res.status(400).json({ error: "חובה לספק מילת מפתח לבדיקת קניבליזציה" });
     }
 
-    const projectId = process.env.VITE_SANITY_PROJECT_ID || "bk4y5jiw";
-    const dataset = process.env.VITE_SANITY_DATASET || "production";
-    const groq = '*[_type=="article" && defined(slug.current)]{title,"slug":slug.current,tags,excerpt,goldLine}';
-    const url = `https://${projectId}.api.sanity.io/v2021-10-21/data/query/${dataset}?query=${encodeURIComponent(groq)}`;
+    const cleanKeyword = String(keyword).trim();
+    const articles = await getCachedSanityArticles();
+    const result = checkCannibalizationLocal(cleanKeyword, articles);
 
-    let articles: any[] = [];
-    try {
-      const resp = await fetch(url);
-      if (resp.ok) {
-        const data: any = await resp.json();
-        articles = data.result || [];
-      }
-    } catch (e) {
-      console.warn("Could not fetch Sanity articles for cannibalization check:", e);
-    }
-
-    const kwTokens = String(keyword)
-      .toLowerCase()
-      .split(/[\s,.-]+/)
-      .filter((t) => t.length > 2);
-
-    const candidates = articles
-      .map((a) => {
-        let matchCount = 0;
-        const text = `${a.title || ""} ${a.excerpt || ""} ${a.goldLine || ""} ${(a.tags || []).join(" ")}`.toLowerCase();
-        kwTokens.forEach((tok) => {
-          if (text.includes(tok)) matchCount += 1;
-        });
-        const similarityScore = kwTokens.length > 0 ? Math.round((matchCount / kwTokens.length) * 100) : 0;
-        return {
-          title: a.title,
-          slug: a.slug,
-          goldLine: a.goldLine,
-          similarityScore,
-        };
-      })
-      .filter((c) => c.similarityScore >= 25)
-      .sort((a, b) => b.similarityScore - a.similarityScore)
-      .slice(0, 4);
-
-    if (candidates.length === 0) {
-      return res.json({
-        hasRisk: false,
-        score: 0,
-        matchedArticles: [],
-        suggestedFocusAngles: [
-          `מיקוד בכאב המיידי וחסר האונים של הורים ביומיום סביב "${keyword}"`,
-          `זווית נוירולוגית של חקר המוח המתבגר (ד"ר דן סיגל)`,
-          `זווית מעשית של תקשורת מקרבת ללא מאבקי כוח (NVC)`,
-        ],
-        recommendation: "לא נמצאה חפיפה משמעותית עם מאמרי האתר. הנושא פנוי לכתיבה כמאמר דגל!",
-      });
-    }
-
-    const client = getAIClient();
-    const prompt = `אתה אסטרטג תוכן ו-SEO של אתר "מצפן הלב" (https://www.heartcompass.co.il).
-נבדקת מילת המפתח: "${keyword}".
-נושא נלווה: "${topic || ""}"
-
-נמצאו המאמרים הקיימים הבאים באתר שעלולים ליצור חפיפה וקניבליזציה בגוגל:
-${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.goldLine || "ללא תקציר"}`).join("\n")}
-
-הערך את רמת הסיכון לקניבליזציה (מ-0 עד 100), הסבר מה כל מאמר קיים כבר מכסה, והצע 3-4 זוויות פוקוס ייחודיות (Differentiated Angles) שיבדלו את המאמר החדש לחלוטין וימנעו תחרות פנימית, בהתאם לדוקטרינת שיטת מ.ס.ע.
-
-החזר אך ורק בפורמט JSON הבא (בלי שום טקסט מחוץ ל-JSON):
-{
-  "hasRisk": true,
-  "score": 65,
-  "recommendation": "המלצה אסטרטגית קצרה ומעשית מה לעשות כדי למנוע קניבליזציה",
-  "matchedArticles": [
-    ${candidates.map((c) => `{ "title": "${c.title}", "slug": "${c.slug}", "similarityScore": ${c.similarityScore}, "reason": "מדוע יש חפיפה ומה המאמר הקיים כבר מכסה" }`).join(",\n")}
-  ],
-  "suggestedFocusAngles": [
-    "זווית ייחודית 1 שתמנע קניבליזציה",
-    "זווית ייחודית 2",
-    "זווית ייחודית 3"
-  ]
-}`;
-
-    const resp = await callGeminiWithResilience(client, {
-      model: sanitizeModel(process.env.AUDIT_MODEL || "gemini-2.5-flash"),
-      contents: prompt,
-      config: {
-        systemInstruction: "You are an elite SEO strategist specializing in keyword cannibalization prevention and content differentiation for HeartCompass.",
-        responseMimeType: "application/json",
-      },
-    });
-
-    const parsed = parseJSONResponse(resp.text || "{}");
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     console.error("Error in check-cannibalization:", err);
     res.status(500).json({ error: friendlyError(err) });
