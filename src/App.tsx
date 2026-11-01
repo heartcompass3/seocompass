@@ -409,7 +409,7 @@ export default function App() {
     setCompetitorError(null);
     setNotification(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
     try {
       const exclude = append ? competitors.map((c) => c.competitorName) : [];
       const response = await fetch('/api/seo/analyze-competitors', {
@@ -451,7 +451,7 @@ export default function App() {
     setKeywordError(null);
     setNotification(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
     try {
       const exclude = append ? keywords.map((k) => k.keyword) : [];
       const response = await fetch('/api/seo/search-keywords', {

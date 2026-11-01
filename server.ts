@@ -201,20 +201,24 @@ function getModelFallbackLadder(requestedModel: string): string[] {
   return Array.from(new Set(candidates));
 }
 
-// Checks if an error is a transient failure (spikes in demand, rate limits, server overload, etc.)
+// Checks if an error is a transient failure (spikes in demand, rate limits, timeouts, server overload, etc.)
 function isTransientError(err: any): boolean {
   if (!err) return false;
   const status = err?.status || err?.code || err?.statusCode || err?.error?.code;
-  if (status === 503 || status === 429 || status === 500 || status === 502 || status === 504 || status === 404) {
+  if (status === 503 || status === 429 || status === 500 || status === 502 || status === 504 || status === 404 || status === 408) {
     return true;
   }
   const msg = String(err?.message || err?.error?.message || err || "").toLowerCase();
   return (
-    /503|429|500|502|504|404/i.test(msg) ||
+    /503|429|500|502|504|404|408/i.test(msg) ||
     /resource_exhausted|quota|rate.?limit/i.test(msg) ||
     /high demand|unavailable|overloaded|spikes in demand/i.test(msg) ||
     /not.?found|no longer available|model.*not.*exist/i.test(msg) ||
-    /econnreset|etimedout|fetch failed|enotfound|und_err_connect_timeout/i.test(msg)
+    /econnreset|etimedout|fetch failed|enotfound|und_err_connect_timeout|timeout|timed out|abort/i.test(msg) ||
+    err?.name === "AbortError" ||
+    err?.name === "TimeoutError" ||
+    err?.name === "APIUserAbortError" ||
+    err?.name === "APIConnectionTimeoutError"
   );
 }
 
@@ -224,8 +228,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Robust execution wrapper for Gemini API calls:
-// - Retries with exponential backoff on transient errors (503 high demand, 429 rate limit, 500 internal)
-// - Cascades down an intelligent model fallback ladder if the primary model remains overloaded
+// - Enforces a strict per-call abort timeout (12s) so no single attempt can hang the server
+// - Retries with exponential backoff on transient errors (503 high demand, 429 rate limit, 500 internal, timeouts)
+// - Cascades down an intelligent model fallback ladder if the primary model remains overloaded/slow
 // - Drops search grounding tools on retry if tool quota is exhausted
 // - Respects a hard timeout budget to stay safely within Vercel serverless bounds
 async function callGeminiWithResilience(
@@ -234,7 +239,8 @@ async function callGeminiWithResilience(
 ) {
   const ladder = getModelFallbackLadder(args.model);
   const startTime = Date.now();
-  const MAX_TOTAL_BUDGET_MS = 35000;
+  const MAX_TOTAL_BUDGET_MS = 28000;
+  const PER_CALL_TIMEOUT_MS = 12000;
 
   let lastError: any = null;
 
@@ -248,11 +254,16 @@ async function callGeminiWithResilience(
       }
 
       try {
-        const configToUse = { ...(args.config || {}) };
+        const configToUse: any = { ...(args.config || {}) };
         // If this is a fallback model or a retry, strip tools (e.g. googleSearch)
         // to bypass search quota limits and ensure core generation succeeds
         if (mIdx > 0 || attempt > 1) {
-          delete (configToUse as any).tools;
+          delete configToUse.tools;
+        }
+
+        // Enforce a strict per-call timeout so no single attempt hangs the server
+        if (!configToUse.abortSignal) {
+          configToUse.abortSignal = AbortSignal.timeout(PER_CALL_TIMEOUT_MS);
         }
 
         const response = await client.models.generateContent({
@@ -270,13 +281,18 @@ async function callGeminiWithResilience(
         const msg = String(err?.message || err?.error?.message || err || "");
         console.warn(`[Gemini Resilience] Model ${currentModel} attempt ${attempt} failed: ${msg.slice(0, 140)}`);
 
+        // If the model doesn't support thinkingConfig, strip it for subsequent attempts
+        if (/thinkingConfig|thinkingBudget|thinking_config/i.test(msg) && args.config) {
+          delete (args.config as any).thinkingConfig;
+        }
+
         if (!isTransientError(err)) {
           throw err;
         }
 
         // If another attempt on this model is allowed and time permits, pause with backoff
         if (attempt < maxAttempts && Date.now() - startTime < MAX_TOTAL_BUDGET_MS - 4000) {
-          await sleep(800 * attempt);
+          await sleep(600 * attempt);
         }
       }
     }
@@ -432,7 +448,7 @@ async function fetchSerpResults(query: string) {
     });
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
     const resp = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
       signal: controller.signal,
@@ -559,6 +575,9 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
     const config: any = {
       systemInstruction: "You are an elite SEO strategist specializing in Google Israel's local search ecosystem. You analyze private practitioners and boutique clinics only. Never return health funds, hospitals, nationwide institutes, or directories. Always output valid JSON.",
       responseMimeType: "application/json",
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
     };
 
     const response = await generateWithFallback(client, {
@@ -651,6 +670,9 @@ ${excludeNote}
       config: {
         systemInstruction: `You are an elite keyword research engine for Google Israel. You MUST generate keyword variations, long-tail phrases, and search queries strictly centered around the user's specific seed keyword: "${seedKeyword}". Never substitute it with a generic topic. Output strictly valid JSON.`,
         responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       },
     });
 
@@ -988,7 +1010,10 @@ ${content}
       contents: prompt,
       config: {
         systemInstruction: "You are a professional SEO content auditor with deep knowledge of search intent, NLP patterns, and semantic search.",
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       }
     });
 
@@ -1338,6 +1363,9 @@ ${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.gol
       config: {
         systemInstruction: "You are an elite SEO strategist specializing in keyword cannibalization prevention and content differentiation for HeartCompass.",
         responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       },
     });
 
@@ -1620,6 +1648,9 @@ ${(sourceBody || "").slice(0, 6000)}
         systemInstruction:
           "אתה אסטרטג התוכן לרשתות של יוסי מדלסי, מותג 'מצפן הלב'. אתה הופך מאמרים לפוסטים בקול המדויק שלו: סיפור קודם, בלי מקפים ארוכים, בלי פתיחות נוסחתיות, בלי CTA קר, בלי הבטחות תוצאה. מדברים על 'הוא/היא' ולא 'אתה', ומסיימים בלולאה פתוחה.",
         responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       },
     });
 
@@ -1677,6 +1708,9 @@ app.post("/api/social/research-hashtags", async (req, res) => {
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
         responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       },
     });
 
@@ -1746,6 +1780,9 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
         responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
       },
     });
 
