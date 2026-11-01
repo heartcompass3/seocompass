@@ -115,7 +115,7 @@ export default function SocialSuite() {
         >
           <option value="gemini-3.8-flash">Gemini 3.8 Flash (מומלץ לפוסטים, רילס וקרוסלות)</option>
           <option value="gemini-3.8-pro">Gemini 3.8 Pro (עומק ואסטרטגיה)</option>
-          <option value="gemini-3.0-flash">Gemini 3.0 Flash (חסכוני במכסה ומהיר)</option>
+          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני במכסה ומהיר)</option>
         </select>
       </div>
 

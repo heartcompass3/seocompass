@@ -199,6 +199,44 @@ const INITIAL_KEYWORDS: KeywordResearchResult[] = [
   }
 ];
 
+function cleanErrorMessage(err: any): string {
+  if (!err) return 'שגיאה לא צפויה.';
+  const raw = typeof err === 'string' ? err : (err?.message || String(err));
+  const trimmed = raw.trim();
+
+  // If raw is a JSON string like {"error":{"code":503,...}}
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.error) {
+        const code = parsed.error.code || parsed.error.status;
+        const msg = String(parsed.error.message || '');
+        if (code === 503 || /503|high demand|unavailable|overloaded/i.test(msg)) {
+          return 'שרתי Google AI חווים כרגע עומס זמני (קוד 503). אנא לחץ שוב בעוד מספר רגעים.';
+        }
+        if (code === 429 || /429|quota|rate/i.test(msg)) {
+          return 'מכסת הקריאות של ה-API נוצלה זמנית. אנא המתן כדקה ונסה שוב.';
+        }
+        if (msg) return msg;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (/503|high demand|overloaded/i.test(trimmed)) {
+    return 'שרתי Google AI חווים כרגע עומס זמני (קוד 503). אנא לחץ שוב בעוד מספר רגעים.';
+  }
+  if (/429|resource_exhausted|quota/i.test(trimmed)) {
+    return 'מכסת הקריאות של ה-API נוצלה זמנית (429). אנא המתן כדקה ונסה שוב.';
+  }
+  if (/abort/i.test(trimmed)) {
+    return 'זמן ההמתנה לשרת הסתיים. נסה שוב.';
+  }
+
+  return trimmed;
+}
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'competitors' | 'keywords' | 'generator' | 'chat' | 'searchconsole'>('competitors');
@@ -399,7 +437,7 @@ export default function App() {
     } catch (err: any) {
       clearTimeout(timeoutId);
       console.error(err);
-      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'ניתוח המתחרים נכשל.');
+      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : cleanErrorMessage(err);
       setCompetitorError(msg);
       setNotification({ type: 'error', message: msg });
     } finally {
@@ -438,7 +476,7 @@ export default function App() {
     } catch (err: any) {
       clearTimeout(timeoutId);
       console.error(err);
-      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : (err.message || 'חיפוש מילות מפתח נכשל. נסה שוב.');
+      const msg = err.name === 'AbortError' ? 'זמן ההמתנה לשרת הסתיים. נסה שוב.' : cleanErrorMessage(err);
       setKeywordError(msg);
       setNotification({ type: 'error', message: msg });
     } finally {
@@ -471,7 +509,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setNotification({ type: 'error', message: err.message || 'ייצור המאמר נכשל.' });
+      setNotification({ type: 'error', message: cleanErrorMessage(err) || 'ייצור המאמר נכשל.' });
       return null;
     } finally {
       setArticleLoading(false);

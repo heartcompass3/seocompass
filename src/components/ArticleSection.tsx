@@ -701,7 +701,7 @@ ${list}
                 >
                   <option value="gemini-3.8-flash">Gemini 3.8 Flash (מומלץ · מהיר, חכם ומעודכן)</option>
                   <option value="gemini-3.8-pro">Gemini 3.8 Pro (עומק חשיבה, כתיבה מורכבת ומחקר)</option>
-                  <option value="gemini-3.0-flash">Gemini 3.0 Flash (חסכוני ומהיר)</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני ומהיר במיוחד)</option>
                 </select>
                 {genModel === 'gemini-3.8-pro' && (
                   <span className="text-[10px] text-amber-600 mt-1">מודל עומק מתקדם — מתאים למאמרי עמוד תווך (Pillars) מקיפים.</span>
@@ -1466,7 +1466,7 @@ ${list}
                         >
                           <option value="gemini-3.8-flash">Gemini 3.8 Flash (עריכות מהירות וכלליות)</option>
                           <option value="gemini-3.8-pro">Gemini 3.8 Pro (משימות שכתוב עומק ומבנה מורכב)</option>
-                          <option value="gemini-3.0-flash">Gemini 3.0 Flash (תיקונים ושינויים מקומיים)</option>
+                          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (תיקונים מהירים וחסכוניים)</option>
                         </select>
                         {selectedModel === 'gemini-3.8-pro' && (
                           <span className="text-[10px] text-amber-300 mt-1">מודל עומק מתקדם לשכתוב מקיף.</span>

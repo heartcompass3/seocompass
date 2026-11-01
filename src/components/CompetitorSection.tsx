@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CompetitorAnalysis, YourSiteAnalysis } from '../types';
-import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2, Plus, Compass, Sparkles, TrendingUp, Target } from 'lucide-react';
+import { Search, Shield, Flame, ThumbsDown, CheckCircle, AlertTriangle, Cpu, Globe, BarChart2, Plus, Compass, Sparkles, TrendingUp, Target, RotateCcw } from 'lucide-react';
 
 interface CompetitorSectionProps {
   onAnalyze: (targetUrl: string, topic: string, append?: boolean) => Promise<void>;
@@ -90,12 +90,23 @@ export default function CompetitorSection({ onAnalyze, loading, competitors, you
 
       {/* Error alert if any */}
       {error && (
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-right flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-          <div className="flex-1 text-xs text-rose-800">
-            <span className="font-bold block mb-0.5">שגיאה בניתוח המתחרים:</span>
-            {error}
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-right flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3 flex-1">
+            <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+            <div className="text-xs text-rose-800">
+              <span className="font-bold block mb-1">שגיאה בניתוח המתחרים:</span>
+              <p className="leading-relaxed">{error}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => onAnalyze(targetUrl, topic, false)}
+            disabled={loading}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>נסה שוב עכשיו</span>
+          </button>
         </div>
       )}
 

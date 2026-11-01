@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { KeywordResearchResult, SearchIntentType } from '../types';
-import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp, Plus, AlertCircle } from 'lucide-react';
+import { Search, BrainCircuit, CheckSquare, Sparkles, Filter, Award, MousePointerClick, TrendingUp, Plus, AlertCircle, RotateCcw } from 'lucide-react';
 
 interface KeywordSectionProps {
   onSearch: (seedKeyword: string, topic: string, append?: boolean) => Promise<void>;
@@ -116,9 +116,20 @@ export default function KeywordSection({ onSearch, loading, keywords, onSelectKe
         </form>
 
         {error && (
-          <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs text-right flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-            <span>{error}</span>
+          <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs text-right flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+              <span className="leading-relaxed">{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSearch(seedKeyword, topic, false)}
+              disabled={loading || !seedKeyword}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>נסה שוב</span>
+            </button>
           </div>
         )}
       </div>

@@ -43,7 +43,7 @@ function getAIClient() {
 
 // Ensure clean JSON string parsing from Gemini response
 function parseJSONResponse(text: string) {
-  const clean = (text || "").trim();
+  let clean = (text || "").trim();
   try {
     return JSON.parse(clean);
   } catch {
@@ -53,53 +53,39 @@ function parseJSONResponse(text: string) {
       try {
         return JSON.parse(match[1].trim());
       } catch {
-        // continue
+        clean = match[1].trim();
       }
     }
 
     // Identify outermost container by whichever brace appears first
     const firstBrace = clean.indexOf("{");
     const firstBracket = clean.indexOf("[");
+    let candidate = clean;
 
     if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
       const lastBrace = clean.lastIndexOf("}");
       if (lastBrace > firstBrace) {
-        try {
-          return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
-        } catch {
-          // continue
-        }
+        candidate = clean.substring(firstBrace, lastBrace + 1);
       }
-    }
-
-    if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    } else if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
       const lastBracket = clean.lastIndexOf("]");
       if (lastBracket > firstBracket) {
-        try {
-          return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
-        } catch {
-          // continue
-        }
+        candidate = clean.substring(firstBracket, lastBracket + 1);
       }
     }
 
-    // Fallbacks if first attempt failed
-    const lastBrace = clean.lastIndexOf("}");
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      try {
-        return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
-      } catch {
-        // continue
-      }
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
     }
 
-    const lastBracket = clean.lastIndexOf("]");
-    if (firstBracket !== -1 && lastBracket > firstBracket) {
-      try {
-        return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
-      } catch {
-        // continue
-      }
+    // Try repairing common LLM syntax bugs (e.g. trailing commas before closing braces/brackets)
+    try {
+      const repaired = candidate.replace(/,\s*([}\]])/g, "$1");
+      return JSON.parse(repaired);
+    } catch {
+      // continue
     }
 
     throw new Error("המערכת לא הצליחה לקרוא את מבנה הנתונים. אנא נסה שנית.");
@@ -177,16 +163,130 @@ function isExcludedCompetitorDomain(rawDomain: string): boolean {
   return false;
 }
 
-// Ensure any deprecated model names are automatically mapped to active Gemini 3.8 models
+// Ensure model names are valid active Gemini models while preserving specialized tiers
 function sanitizeModel(model?: string): string {
   if (!model) return "gemini-3.8-flash";
-  const m = model.toLowerCase();
-  if (m.includes("2.5") || m.includes("2.0") || m.includes("1.5")) {
-    if (m.includes("pro")) return "gemini-3.8-pro";
-    return "gemini-3.8-flash";
+  const m = model.toLowerCase().trim();
+  // Valid active models in 2026
+  if (
+    m === "gemini-3.8-flash" ||
+    m === "gemini-3.8-pro" ||
+    m === "gemini-3.5-flash-lite" ||
+    m === "gemini-2.5-flash" ||
+    m === "gemini-2.0-flash"
+  ) {
+    return m;
   }
-  return model;
+  if (m.includes("lite")) return "gemini-3.5-flash-lite";
+  if (m.includes("pro")) return "gemini-3.8-pro";
+  if (m.includes("3.0") || m.includes("2.5") || m.includes("2.0") || m.includes("1.5")) return "gemini-3.8-flash";
+  return m;
 }
+
+// Builds an ordered fallback ladder for a requested model
+function getModelFallbackLadder(requestedModel: string): string[] {
+  const primary = sanitizeModel(requestedModel);
+  const candidates: string[] = [primary];
+
+  if (primary.includes("pro")) {
+    candidates.push("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash");
+  } else if (primary.includes("lite")) {
+    candidates.push("gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash");
+  } else {
+    // Standard Flash tier: cascade to high-throughput flash-lite, then legacy flash, then pro
+    candidates.push("gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-pro");
+  }
+
+  // Deduplicate while preserving priority order
+  return Array.from(new Set(candidates));
+}
+
+// Checks if an error is a transient failure (spikes in demand, rate limits, server overload, etc.)
+function isTransientError(err: any): boolean {
+  if (!err) return false;
+  const status = err?.status || err?.code || err?.statusCode || err?.error?.code;
+  if (status === 503 || status === 429 || status === 500 || status === 502 || status === 504 || status === 404) {
+    return true;
+  }
+  const msg = String(err?.message || err?.error?.message || err || "").toLowerCase();
+  return (
+    /503|429|500|502|504|404/i.test(msg) ||
+    /resource_exhausted|quota|rate.?limit/i.test(msg) ||
+    /high demand|unavailable|overloaded|spikes in demand/i.test(msg) ||
+    /not.?found|no longer available|model.*not.*exist/i.test(msg) ||
+    /econnreset|etimedout|fetch failed|enotfound|und_err_connect_timeout/i.test(msg)
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  const jitter = Math.floor(Math.random() * 250);
+  return new Promise((resolve) => setTimeout(resolve, ms + jitter));
+}
+
+// Robust execution wrapper for Gemini API calls:
+// - Retries with exponential backoff on transient errors (503 high demand, 429 rate limit, 500 internal)
+// - Cascades down an intelligent model fallback ladder if the primary model remains overloaded
+// - Drops search grounding tools on retry if tool quota is exhausted
+// - Respects a hard timeout budget to stay safely within Vercel serverless bounds
+async function callGeminiWithResilience(
+  client: GoogleGenAI,
+  args: { model: string; contents: any; config?: any }
+) {
+  const ladder = getModelFallbackLadder(args.model);
+  const startTime = Date.now();
+  const MAX_TOTAL_BUDGET_MS = 35000;
+
+  let lastError: any = null;
+
+  for (let mIdx = 0; mIdx < ladder.length; mIdx++) {
+    const currentModel = ladder[mIdx];
+    const maxAttempts = mIdx === 0 ? 2 : 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (Date.now() - startTime > MAX_TOTAL_BUDGET_MS) {
+        break;
+      }
+
+      try {
+        const configToUse = { ...(args.config || {}) };
+        // If this is a fallback model or a retry, strip tools (e.g. googleSearch)
+        // to bypass search quota limits and ensure core generation succeeds
+        if (mIdx > 0 || attempt > 1) {
+          delete (configToUse as any).tools;
+        }
+
+        const response = await client.models.generateContent({
+          model: currentModel,
+          contents: args.contents,
+          config: configToUse,
+        });
+
+        if (mIdx > 0) {
+          console.log(`[Gemini Resilience] Fallback model ${currentModel} succeeded.`);
+        }
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || err?.error?.message || err || "");
+        console.warn(`[Gemini Resilience] Model ${currentModel} attempt ${attempt} failed: ${msg.slice(0, 140)}`);
+
+        if (!isTransientError(err)) {
+          throw err;
+        }
+
+        // If another attempt on this model is allowed and time permits, pause with backoff
+        if (attempt < maxAttempts && Date.now() - startTime < MAX_TOTAL_BUDGET_MS - 4000) {
+          await sleep(800 * attempt);
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// Backward-compatible alias
+const generateWithFallback = callGeminiWithResilience;
 
 // Get Sanity Auth Token from env or local config
 function getSanityToken(): string | null {
@@ -254,41 +354,63 @@ function convertMarkdownToPortableText(markdown: string): any[] {
   return blocks;
 }
 
-// Run a Gemini call with automatic fallback to a lighter, higher-quota model
-// on 429 / quota errors. Grounding tools (googleSearch) have a tiny separate
-// free-tier quota, so the retry also drops them.
-async function generateWithFallback(
-  client: GoogleGenAI,
-  args: { model: string; contents: any; config?: any }
-) {
-  const modelToUse = sanitizeModel(args.model);
-  const FALLBACK = sanitizeModel(process.env.GEMINI_FALLBACK_MODEL || "gemini-3.8-flash");
-  try {
-    return await client.models.generateContent({ ...args, model: modelToUse });
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    const isRetryable = err?.status === 429 || err?.status === 404 || /429|404|RESOURCE_EXHAUSTED|quota|rate.?limit|no longer available/i.test(msg);
-    if (!isRetryable) throw err;
-    const retryConfig = { ...(args.config || {}) };
-    delete (retryConfig as any).tools;
-    return await client.models.generateContent({
-      model: FALLBACK,
-      contents: args.contents,
-      config: retryConfig,
-    });
-  }
-}
-
-// Turn a raw provider error into a friendly Hebrew message (esp. quota/429).
+// Turn provider errors into crystal-clear, reassuring Hebrew messages.
+// Safely parses raw JSON payloads and eliminates raw stack traces / English error dumps.
 function friendlyError(err: any): string {
-  const msg = String(err?.message || err || "");
-  if (err?.status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(msg)) {
-    return "המכסה של Gemini נוצלה כרגע. המערכת עוברת אוטומטית ל-Gemini 3.8 Flash, או שניתן לנסות שוב בעוד דקה.";
+  if (!err) return "שגיאה לא צפויה בעת עיבוד הבקשה.";
+
+  let status = err?.status || err?.code || err?.statusCode || err?.error?.code;
+  let rawMsg = String(err?.message || err?.error?.message || err || "").trim();
+
+  // Parse embedded JSON error bodies like '{"error":{"code":503,"message":"..."}}'
+  if (rawMsg.startsWith("{") && rawMsg.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(rawMsg);
+      if (parsed.error) {
+        status = status || parsed.error.code || parsed.error.status;
+        rawMsg = String(parsed.error.message || rawMsg);
+      }
+    } catch {
+      // ignore JSON parse failure
+    }
   }
-  if (err?.status === 404 || /not.?found|no longer available/i.test(msg)) {
-    return "המודל המבוקש עודכן על ידי גוגל ל-Gemini 3.8 Flash.";
+
+  // 1. 503 High Demand / Spikes / Service Unavailable
+  if (status === 503 || /503|unavailable|high demand|overloaded|spikes in demand/i.test(rawMsg)) {
+    return "שרתי ה-AI של גוגל חווים עומס זמני גבוה (קוד 503). המערכת ניסתה מספר מודלים חלופיים. אנא לחץ שוב על הכפתור בעוד מספר שניות.";
   }
-  return msg || "שגיאה לא צפויה";
+
+  // 2. 429 Quota / Rate limit
+  if (status === 429 || /429|resource_exhausted|quota|rate.?limit/i.test(rawMsg)) {
+    return "מכסת הקריאות של ה-API מוצתה זמנית (429). אנא המתן כדקה ונסה שוב, או בדוק את הגדרות המכסה ב-Google AI Studio.";
+  }
+
+  // 3. 404 Model Not Found
+  if (status === 404 || /not.?found|no longer available|does not exist/i.test(rawMsg)) {
+    return "המודל המבוקש עודכן על ידי גוגל או אינו זמין כרגע. אנא נסה שוב.";
+  }
+
+  // 4. Missing API key
+  if (/gemini_api_key.*חסר|api key not defined/i.test(rawMsg)) {
+    return "מפתח ה-API של גוגל (GEMINI_API_KEY) חסר בהגדרות הסביבה של Vercel. אנא הגדר אותו בהגדרות הפרויקט.";
+  }
+
+  // 5. Auth / 401 / 403
+  if (status === 401 || status === 403 || /permission_denied|unauthenticated|api_key_invalid/i.test(rawMsg)) {
+    return "מפתח ה-API של גוגל אינו מורשה או שאינו תקין. אנא ודא את תקינות GEMINI_API_KEY ב-Vercel.";
+  }
+
+  // 6. Network / Fetch failures
+  if (/fetch failed|econnreset|etimedout|enotfound|und_err_connect_timeout/i.test(rawMsg)) {
+    return "שגיאת תקשורת זמנית מול שרתי גוגל. בדוק את החיבור לרשת ונסה שוב.";
+  }
+
+  // 7. Sanitized catch-all: Never leak raw JSON structures or SDK internal names
+  if (rawMsg.startsWith("{") || rawMsg.includes('"error"') || rawMsg.includes("GoogleGenAI")) {
+    return "שגיאה זמנית בעיבוד התשובה ממודל השפה. אנא נסה שוב בעוד רגע.";
+  }
+
+  return rawMsg || "שגיאה לא צפויה בעת עיבוד הבקשה.";
 }
 
 // Fetch live Google Israel SERP results via SerpApi (https://serpapi.com).
@@ -861,7 +983,7 @@ ${content}
   ]
 }`;
 
-    const response = await client.models.generateContent({
+    const response = await callGeminiWithResilience(client, {
       model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
@@ -875,7 +997,7 @@ ${content}
     res.json({ audit: data });
   } catch (error: any) {
     console.error("Error in analyze-content:", error);
-    res.status(500).json({ error: error.message || "שגיאה באנליזת ה-SEO" });
+    res.status(500).json({ error: friendlyError(error) });
   }
 });
 
@@ -1210,7 +1332,7 @@ ${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.gol
   ]
 }`;
 
-    const resp = await client.models.generateContent({
+    const resp = await callGeminiWithResilience(client, {
       model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
       contents: prompt,
       config: {
@@ -1223,7 +1345,7 @@ ${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.gol
     res.json(parsed);
   } catch (err: any) {
     console.error("Error in check-cannibalization:", err);
-    res.status(500).json({ error: err.message || "שגיאה בבדיקת קניבליזציה" });
+    res.status(500).json({ error: friendlyError(err) });
   }
 });
 
