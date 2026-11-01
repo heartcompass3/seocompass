@@ -230,7 +230,10 @@ function cleanErrorMessage(err: any): string {
   if (/429|resource_exhausted|quota/i.test(trimmed)) {
     return 'מכסת הקריאות של ה-API נוצלה זמנית (429). אנא המתן כדקה ונסה שוב.';
   }
-  if (/abort/i.test(trimmed)) {
+  if (/invalid.?argument|bad request/i.test(trimmed)) {
+    return 'שגיאה זמנית בהגדרות הבקשה מול שרתי ה-AI. אנא לחץ על כפתור הניסיון החוזר.';
+  }
+  if (/timeout|timed out|abort/i.test(trimmed)) {
     return 'זמן ההמתנה לשרת הסתיים. נסה שוב.';
   }
 

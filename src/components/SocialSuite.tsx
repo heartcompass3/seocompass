@@ -15,7 +15,7 @@ export default function SocialSuite() {
   const [tab, setTab] = useState<SocialTab>('posts');
   const [articles, setArticles] = useState<SocialArticleRef[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState('gemini-3.8-flash');
+  const [model, setModel] = useState('gemini-2.5-flash');
 
   // Post generator
   const [postsLoading, setPostsLoading] = useState(false);
@@ -53,7 +53,7 @@ export default function SocialSuite() {
     } catch (err: any) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        throw new Error('זמן ההמתנה לשרת הסתיים. נסה שוב או עבור למודל Gemini 3.8 Flash.');
+        throw new Error('זמן ההמתנה לשרת הסתיים. נסה שוב או בחר במודל Gemini 2.5 Flash.');
       }
       throw err;
     }
@@ -113,8 +113,11 @@ export default function SocialSuite() {
           onChange={(e) => setModel(e.target.value)}
           className="bg-white text-slate-700 text-xs py-1.5 px-3 border border-slate-200 rounded-lg outline-none focus:border-blue-500"
         >
-          <option value="gemini-3.8-flash">Gemini 3.8 Flash (מומלץ לפוסטים, רילס וקרוסלות)</option>
-          <option value="gemini-3.8-pro">Gemini 3.8 Pro (עומק ואסטרטגיה)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (מומלץ · מהיר ויציב ביותר)</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash (ביצועים גבוהים)</option>
+          <option value="gemini-1.5-flash">Gemini 1.5 Flash (יציב)</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro (עומק ואסטרטגיה)</option>
+          <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
           <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני במכסה ומהיר)</option>
         </select>
       </div>

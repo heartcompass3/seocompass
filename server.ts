@@ -165,22 +165,25 @@ function isExcludedCompetitorDomain(rawDomain: string): boolean {
 
 // Ensure model names are valid active Gemini models while preserving specialized tiers
 function sanitizeModel(model?: string): string {
-  if (!model) return "gemini-3.8-flash";
+  if (!model) return "gemini-2.5-flash";
   const m = model.toLowerCase().trim();
-  // Valid active models in 2026
   if (
+    m === "gemini-2.5-flash" ||
+    m === "gemini-2.5-pro" ||
+    m === "gemini-2.0-flash" ||
+    m === "gemini-1.5-flash" ||
     m === "gemini-3.8-flash" ||
     m === "gemini-3.8-pro" ||
-    m === "gemini-3.5-flash-lite" ||
-    m === "gemini-2.5-flash" ||
-    m === "gemini-2.0-flash"
+    m === "gemini-3.5-flash-lite"
   ) {
     return m;
   }
+  if (m.includes("3.8") && m.includes("pro")) return "gemini-3.8-pro";
+  if (m.includes("3.8")) return "gemini-3.8-flash";
+  if (m.includes("pro")) return "gemini-2.5-pro";
   if (m.includes("lite")) return "gemini-3.5-flash-lite";
-  if (m.includes("pro")) return "gemini-3.8-pro";
-  if (m.includes("3.0") || m.includes("2.5") || m.includes("2.0") || m.includes("1.5")) return "gemini-3.8-flash";
-  return m;
+  if (m.includes("2.0")) return "gemini-2.0-flash";
+  return "gemini-2.5-flash";
 }
 
 // Builds an ordered fallback ladder for a requested model
@@ -189,12 +192,10 @@ function getModelFallbackLadder(requestedModel: string): string[] {
   const candidates: string[] = [primary];
 
   if (primary.includes("pro")) {
-    candidates.push("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash");
-  } else if (primary.includes("lite")) {
-    candidates.push("gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash");
+    candidates.push("gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-flash");
   } else {
-    // Standard Flash tier: cascade to high-throughput flash-lite, then legacy flash, then pro
-    candidates.push("gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-pro");
+    // High-availability cascade: default to rock-solid 2.5-flash and 2.0-flash
+    candidates.push("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite");
   }
 
   // Deduplicate while preserving priority order
@@ -205,15 +206,16 @@ function getModelFallbackLadder(requestedModel: string): string[] {
 function isTransientError(err: any): boolean {
   if (!err) return false;
   const status = err?.status || err?.code || err?.statusCode || err?.error?.code;
-  if (status === 503 || status === 429 || status === 500 || status === 502 || status === 504 || status === 404 || status === 408) {
+  if (status === 503 || status === 429 || status === 500 || status === 502 || status === 504 || status === 404 || status === 408 || status === 400) {
     return true;
   }
   const msg = String(err?.message || err?.error?.message || err || "").toLowerCase();
   return (
-    /503|429|500|502|504|404|408/i.test(msg) ||
+    /503|429|500|502|504|404|408|400/i.test(msg) ||
     /resource_exhausted|quota|rate.?limit/i.test(msg) ||
     /high demand|unavailable|overloaded|spikes in demand/i.test(msg) ||
     /not.?found|no longer available|model.*not.*exist/i.test(msg) ||
+    /invalid.?argument/i.test(msg) ||
     /econnreset|etimedout|fetch failed|enotfound|und_err_connect_timeout|timeout|timed out|abort/i.test(msg) ||
     err?.name === "AbortError" ||
     err?.name === "TimeoutError" ||
@@ -227,9 +229,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms + jitter));
 }
 
+// Safe promise timeout helper
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err: any = new Error(`${label} timed out after ${ms}ms`);
+      err.name = "TimeoutError";
+      err.status = 504;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 // Robust execution wrapper for Gemini API calls:
-// - Enforces a strict per-call abort timeout (12s) so no single attempt can hang the server
-// - Retries with exponential backoff on transient errors (503 high demand, 429 rate limit, 500 internal, timeouts)
+// - Uses withTimeout (10s) so no single attempt can hang the server
+// - Retries with exponential backoff on transient errors (503 high demand, 429 rate limit, 500 internal, timeouts, 400 invalid argument)
 // - Cascades down an intelligent model fallback ladder if the primary model remains overloaded/slow
 // - Drops search grounding tools on retry if tool quota is exhausted
 // - Respects a hard timeout budget to stay safely within Vercel serverless bounds
@@ -240,7 +258,7 @@ async function callGeminiWithResilience(
   const ladder = getModelFallbackLadder(args.model);
   const startTime = Date.now();
   const MAX_TOTAL_BUDGET_MS = 28000;
-  const PER_CALL_TIMEOUT_MS = 12000;
+  const PER_CALL_TIMEOUT_MS = 10000;
 
   let lastError: any = null;
 
@@ -256,21 +274,23 @@ async function callGeminiWithResilience(
       try {
         const configToUse: any = { ...(args.config || {}) };
         // If this is a fallback model or a retry, strip tools (e.g. googleSearch)
-        // to bypass search quota limits and ensure core generation succeeds
         if (mIdx > 0 || attempt > 1) {
           delete configToUse.tools;
         }
+        // Strip any unsupported thinking configs or abort signals from config object
+        delete configToUse.thinkingConfig;
+        delete configToUse.thinking_config;
+        delete configToUse.abortSignal;
 
-        // Enforce a strict per-call timeout so no single attempt hangs the server
-        if (!configToUse.abortSignal) {
-          configToUse.abortSignal = AbortSignal.timeout(PER_CALL_TIMEOUT_MS);
-        }
-
-        const response = await client.models.generateContent({
-          model: currentModel,
-          contents: args.contents,
-          config: configToUse,
-        });
+        const response = await withTimeout(
+          client.models.generateContent({
+            model: currentModel,
+            contents: args.contents,
+            config: configToUse,
+          }),
+          PER_CALL_TIMEOUT_MS,
+          `Model ${currentModel}`
+        );
 
         if (mIdx > 0) {
           console.log(`[Gemini Resilience] Fallback model ${currentModel} succeeded.`);
@@ -281,18 +301,13 @@ async function callGeminiWithResilience(
         const msg = String(err?.message || err?.error?.message || err || "");
         console.warn(`[Gemini Resilience] Model ${currentModel} attempt ${attempt} failed: ${msg.slice(0, 140)}`);
 
-        // If the model doesn't support thinkingConfig, strip it for subsequent attempts
-        if (/thinkingConfig|thinkingBudget|thinking_config/i.test(msg) && args.config) {
-          delete (args.config as any).thinkingConfig;
-        }
-
         if (!isTransientError(err)) {
           throw err;
         }
 
         // If another attempt on this model is allowed and time permits, pause with backoff
         if (attempt < maxAttempts && Date.now() - startTime < MAX_TOTAL_BUDGET_MS - 4000) {
-          await sleep(600 * attempt);
+          await sleep(500 * attempt);
         }
       }
     }
@@ -406,22 +421,32 @@ function friendlyError(err: any): string {
     return "המודל המבוקש עודכן על ידי גוגל או אינו זמין כרגע. אנא נסה שוב.";
   }
 
-  // 4. Missing API key
+  // 4. 400 Invalid argument / bad request
+  if (status === 400 || /invalid.?argument|bad request/i.test(rawMsg)) {
+    return "שגיאה זמנית בהגדרות הבקשה מול מודל השפה. אנא לחץ על כפתור הניסיון החוזר.";
+  }
+
+  // 5. Timeouts / Abort
+  if (status === 504 || status === 408 || /timeout|timed out|abort/i.test(rawMsg)) {
+    return "זמן ההמתנה לשרת הסתיים. אנא לחץ על כפתור הניסיון החוזר.";
+  }
+
+  // 6. Missing API key
   if (/gemini_api_key.*חסר|api key not defined/i.test(rawMsg)) {
     return "מפתח ה-API של גוגל (GEMINI_API_KEY) חסר בהגדרות הסביבה של Vercel. אנא הגדר אותו בהגדרות הפרויקט.";
   }
 
-  // 5. Auth / 401 / 403
+  // 7. Auth / 401 / 403
   if (status === 401 || status === 403 || /permission_denied|unauthenticated|api_key_invalid/i.test(rawMsg)) {
     return "מפתח ה-API של גוגל אינו מורשה או שאינו תקין. אנא ודא את תקינות GEMINI_API_KEY ב-Vercel.";
   }
 
-  // 6. Network / Fetch failures
+  // 8. Network / Fetch failures
   if (/fetch failed|econnreset|etimedout|enotfound|und_err_connect_timeout/i.test(rawMsg)) {
     return "שגיאת תקשורת זמנית מול שרתי גוגל. בדוק את החיבור לרשת ונסה שוב.";
   }
 
-  // 7. Sanitized catch-all: Never leak raw JSON structures or SDK internal names
+  // 9. Sanitized catch-all: Never leak raw JSON structures or SDK internal names
   if (rawMsg.startsWith("{") || rawMsg.includes('"error"') || rawMsg.includes("GoogleGenAI")) {
     return "שגיאה זמנית בעיבוד התשובה ממודל השפה. אנא נסה שוב בעוד רגע.";
   }
@@ -575,13 +600,10 @@ app.post("/api/seo/analyze-competitors", async (req, res) => {
     const config: any = {
       systemInstruction: "You are an elite SEO strategist specializing in Google Israel's local search ecosystem. You analyze private practitioners and boutique clinics only. Never return health funds, hospitals, nationwide institutes, or directories. Always output valid JSON.",
       responseMimeType: "application/json",
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
     };
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(process.env.COMPETITOR_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(process.env.COMPETITOR_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config,
     });
@@ -665,14 +687,11 @@ ${excludeNote}
 ]`;
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(process.env.KEYWORD_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(process.env.KEYWORD_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: `You are an elite keyword research engine for Google Israel. You MUST generate keyword variations, long-tail phrases, and search queries strictly centered around the user's specific seed keyword: "${seedKeyword}". Never substitute it with a generic topic. Output strictly valid JSON.`,
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -694,7 +713,7 @@ app.post("/api/seo/generate-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-3.8-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
 
     let searchGuidance = "";
     if (useSearch) {
@@ -877,7 +896,7 @@ app.post("/api/seo/edit-article", async (req, res) => {
     }
 
     const client = getAIClient();
-    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-3.8-flash";
+    const modelName = selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
 
     let searchGuidance = "";
     if (useSearch) {
@@ -1006,14 +1025,11 @@ ${content}
 }`;
 
     const response = await callGeminiWithResilience(client, {
-      model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(process.env.AUDIT_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are a professional SEO content auditor with deep knowledge of search intent, NLP patterns, and semantic search.",
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       }
     });
 
@@ -1066,7 +1082,7 @@ app.post("/api/seo/chat-expert", async (req, res) => {
     }
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(process.env.CHAT_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(process.env.CHAT_MODEL || "gemini-2.5-flash"),
       contents: geminiContents,
       config: chatConfig,
     });
@@ -1358,14 +1374,11 @@ ${candidates.map((c, i) => `${i + 1}. "${c.title}" (slug: ${c.slug}) — ${c.gol
 }`;
 
     const resp = await callGeminiWithResilience(client, {
-      model: process.env.AUDIT_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(process.env.AUDIT_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are an elite SEO strategist specializing in keyword cannibalization prevention and content differentiation for HeartCompass.",
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -1491,7 +1504,7 @@ ${content}
 }`;
 
     const resp = await generateWithFallback(client, {
-      model: process.env.ARTICLE_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(process.env.ARTICLE_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are the head of content and brand campaigns for HeartCompass. You turn in-depth psychological/parenting articles into cohesive, high-converting 360-degree campaigns in Yossi Medalsi's exact voice.",
@@ -1642,15 +1655,12 @@ ${(sourceBody || "").slice(0, 6000)}
 חובה: צור אובייקט post נפרד לכל פלטפורמת כיתוב מבוקשת (${captionPlatforms.join(", ") || "אין"}). ${wantsReels ? "בנוסף, מלא את האובייקט reels עם סקריפט וידאו מלא (5-7 ביטים עם timecode, טקסט על המסך, voiceover וויזואל)." : "החזר reels כ-null."} אם אינסטגרם מבוקש, מלא carousel עם 4-6 שקופיות; אחרת החזר carousel כמערך ריק. כל הטקסט בעברית רהוטה בקול של יוסי.`;
 
     const response = await generateWithFallback(client, {
-      model: model || process.env.SOCIAL_MODEL || "gemini-3.8-flash",
+      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction:
           "אתה אסטרטג התוכן לרשתות של יוסי מדלסי, מותג 'מצפן הלב'. אתה הופך מאמרים לפוסטים בקול המדויק שלו: סיפור קודם, בלי מקפים ארוכים, בלי פתיחות נוסחתיות, בלי CTA קר, בלי הבטחות תוצאה. מדברים על 'הוא/היא' ולא 'אתה', ומסיימים בלולאה פתוחה.",
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -1703,14 +1713,11 @@ app.post("/api/social/research-hashtags", async (req, res) => {
 הנחיות: 12-18 האשטגים בעברית (תמהיל broad/niche/branded), 4-6 זוויות תוכן, 3 חלונות פרסום, 4-5 עמודי תוכן. הכל בעברית, בקול של מצפן הלב (בלי מקפים ארוכים, בלי קלישאות).`;
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Hebrew social media researcher for the 'מצפן הלב' brand. You output practical, realistic hashtag and content research with estimated reach.",
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -1775,14 +1782,11 @@ ${handle ? `החשבון שלנו: ${handle}.` : ""}
 כל הטקסט בעברית מקצועית.`;
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(model || process.env.COMPETITOR_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(model || process.env.COMPETITOR_MODEL || "gemini-2.5-flash"),
       contents: prompt,
       config: {
         systemInstruction: "You are a Hebrew social media competitive analyst. You find realistic, same-scale competitors and estimate their social strategy from public signals.",
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -1814,7 +1818,7 @@ app.post("/api/social/chat", async (req, res) => {
     if (useSearch) config.tools = [{ googleSearch: {} }];
 
     const response = await generateWithFallback(client, {
-      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-3.8-flash"),
+      model: sanitizeModel(model || process.env.SOCIAL_MODEL || "gemini-2.5-flash"),
       contents,
       config,
     });

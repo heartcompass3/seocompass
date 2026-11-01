@@ -197,7 +197,7 @@ export default function ArticleSection({
   const [additionalKeywords, setAdditionalKeywords] = useState('');
   const [guidelines, setGuidelines] = useState('');
   const [useSearch, setUseSearch] = useState(false);
-  const [genModel, setGenModel] = useState('gemini-3.8-flash');
+  const [genModel, setGenModel] = useState('gemini-2.5-flash');
 
   // Internal-link suggestions from Sanity
   const [linkSuggestions, setLinkSuggestions] = useState<Array<{ title: string; slug: string; tags: string[]; score: number }>>([]);
@@ -227,7 +227,7 @@ export default function ArticleSection({
 
   // AI Editor and Auditor States
   const [editPrompt, setEditPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-3.8-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
   const [useSearchForEdit, setUseSearchForEdit] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
   const [editError, setEditError] = useState('');
@@ -699,11 +699,14 @@ ${list}
                   className="w-full text-right bg-slate-50 hover:bg-slate-100/50 focus:bg-white text-slate-800 text-sm px-3 py-2 rounded-xl border border-slate-200 focus:border-blue-500 outline-none transition-all"
                   id="article-gen-model"
                 >
-                  <option value="gemini-3.8-flash">Gemini 3.8 Flash (מומלץ · מהיר, חכם ומעודכן)</option>
-                  <option value="gemini-3.8-pro">Gemini 3.8 Pro (עומק חשיבה, כתיבה מורכבת ומחקר)</option>
-                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני ומהיר במיוחד)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (מומלץ · מהיר, יציב ומעודכן)</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash (ביצועים גבוהים)</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (יציב)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (עומק חשיבה, כתיבה מורכבת ומחקר)</option>
+                  <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני ומהיר)</option>
                 </select>
-                {genModel === 'gemini-3.8-pro' && (
+                {genModel.includes('pro') && (
                   <span className="text-[10px] text-amber-600 mt-1">מודל עומק מתקדם — מתאים למאמרי עמוד תווך (Pillars) מקיפים.</span>
                 )}
               </div>
@@ -1464,11 +1467,14 @@ ${list}
                           onChange={(e) => setSelectedModel(e.target.value)}
                           className="w-full text-right bg-slate-900 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-400 outline-none"
                         >
-                          <option value="gemini-3.8-flash">Gemini 3.8 Flash (עריכות מהירות וכלליות)</option>
-                          <option value="gemini-3.8-pro">Gemini 3.8 Pro (משימות שכתוב עומק ומבנה מורכב)</option>
-                          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (תיקונים מהירים וחסכוניים)</option>
+                          <option value="gemini-2.5-flash">Gemini 2.5 Flash (מומלץ · מהיר ויציב)</option>
+                          <option value="gemini-2.0-flash">Gemini 2.0 Flash (ביצועים גבוהים)</option>
+                          <option value="gemini-1.5-flash">Gemini 1.5 Flash (יציב)</option>
+                          <option value="gemini-2.5-pro">Gemini 2.5 Pro (עומק חשיבה ומחקר)</option>
+                          <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+                          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (חסכוני ומהיר)</option>
                         </select>
-                        {selectedModel === 'gemini-3.8-pro' && (
+                        {selectedModel.includes('pro') && (
                           <span className="text-[10px] text-amber-300 mt-1">מודל עומק מתקדם לשכתוב מקיף.</span>
                         )}
                       </div>
