@@ -233,6 +233,7 @@ export default function ArticleSection({
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
   const [activeSubConsole, setActiveSubConsole] = useState<'editor' | 'auditor'>('editor');
+  const [generationError, setGenerationError] = useState('');
 
   useEffect(() => {
     if (selectedKeyword) {
@@ -247,14 +248,28 @@ export default function ArticleSection({
     setAuditResult(null);
     setCampaignResult(null);
     setCampaignError('');
+    setGenerationError('');
   }, [generatedArticle]);
+
+  const handleClearDraft = () => {
+    if (confirm('האם אתה בטוח שברצונך לנקות את המאמר המוצג ולהתחיל מאמר חדש?')) {
+      setGeneratedArticle(null);
+      setGenerationError('');
+      try {
+        localStorage.removeItem('seocompass_draft');
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!keyword) return;
     setSaveSuccess(false);
     setSaveError('');
-    await onGenerateArticle({
+    setGenerationError('');
+    const res = await onGenerateArticle({
       keyword,
       audience,
       tone,
@@ -263,6 +278,9 @@ export default function ArticleSection({
       useSearch,
       selectedModel: genModel
     });
+    if (!res) {
+      setGenerationError('יצירת המאמר לא הושלמה. לחץ שוב על "נסה שוב" או בחר מודל אחר.');
+    }
   };
 
   // promptOverride lets the analyzer feed its recommendations straight into the
@@ -603,6 +621,23 @@ ${list}
                 </label>
               </div>
 
+              {/* Generation Error Alert */}
+              {generationError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-2 flex-row-reverse animate-fade-in">
+                  <div className="flex items-center gap-2 flex-row-reverse">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="font-semibold text-right leading-tight">{generationError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSubmit}
+                    className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded-lg shrink-0 cursor-pointer transition-all"
+                  >
+                    נסה שוב
+                  </button>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={loading || !keyword}
@@ -621,6 +656,20 @@ ${list}
                   </>
                 )}
               </button>
+
+              {generatedArticle && (
+                <div className="flex items-center justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={handleClearDraft}
+                    className="text-[11px] text-slate-400 hover:text-rose-600 flex items-center gap-1 transition-all cursor-pointer"
+                    title="נקה את המאמר הנוכחי המוצג על המסך"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>נקה טיוטה נוכחית מהמסך</span>
+                  </button>
+                </div>
+              )}
             </form>
           </div>
 
@@ -815,6 +864,16 @@ ${list}
                         <span>שמור ב-Google Drive</span>
                       </>
                     )}
+                  </button>
+
+                  {/* Clear draft and start fresh */}
+                  <button
+                    onClick={handleClearDraft}
+                    className="px-3 py-2 text-xs font-semibold rounded-xl text-slate-500 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                    title="נקה מאמר זה מהמסך כדי להתחיל מאמר חדש ונקי"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>נקה טיוטה</span>
                   </button>
                 </div>
               </div>

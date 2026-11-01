@@ -253,21 +253,29 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // - Respects a hard timeout budget to stay safely within Vercel serverless bounds
 async function callGeminiWithResilience(
   client: GoogleGenAI,
-  args: { model: string; contents: any; config?: any }
+  args: {
+    model: string;
+    contents: any;
+    config?: any;
+    timeoutMs?: number;
+    totalBudgetMs?: number;
+  }
 ) {
   const ladder = getModelFallbackLadder(args.model);
   const startTime = Date.now();
-  const MAX_TOTAL_BUDGET_MS = 28000;
-  const PER_CALL_TIMEOUT_MS = 10000;
+  const MAX_TOTAL_BUDGET_MS = args.totalBudgetMs || 28000;
+  const PER_CALL_TIMEOUT_MS = args.timeoutMs || 12000;
 
   let lastError: any = null;
 
   for (let mIdx = 0; mIdx < ladder.length; mIdx++) {
     const currentModel = ladder[mIdx];
-    const maxAttempts = mIdx === 0 ? 2 : 1;
+    // For long calls (>20s timeout), limit to 1 attempt per model so we preserve budget for fallbacks
+    const maxAttempts = mIdx === 0 ? (PER_CALL_TIMEOUT_MS > 20000 ? 1 : 2) : 1;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (Date.now() - startTime > MAX_TOTAL_BUDGET_MS) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > MAX_TOTAL_BUDGET_MS - 2000) {
         break;
       }
 
@@ -282,13 +290,16 @@ async function callGeminiWithResilience(
         delete configToUse.thinking_config;
         delete configToUse.abortSignal;
 
+        const remainingBudget = Math.max(5000, MAX_TOTAL_BUDGET_MS - (Date.now() - startTime));
+        const effectiveTimeout = Math.min(PER_CALL_TIMEOUT_MS, remainingBudget);
+
         const response = await withTimeout(
           client.models.generateContent({
             model: currentModel,
             contents: args.contents,
             config: configToUse,
           }),
-          PER_CALL_TIMEOUT_MS,
+          effectiveTimeout,
           `Model ${currentModel}`
         );
 
@@ -383,6 +394,71 @@ function convertMarkdownToPortableText(markdown: string): any[] {
   }
 
   return blocks;
+}
+
+// Convert Markdown text to clean RTL HTML without needing an extra roundtrip LLM token generation
+function convertMarkdownToRtlHtml(markdown: string): string {
+  if (!markdown) return "";
+  const lines = markdown.split("\n");
+  const htmlParts: string[] = [];
+  let inList: "ul" | "ol" | null = null;
+
+  const closeList = () => {
+    if (inList) {
+      htmlParts.push(`</${inList}>`);
+      inList = null;
+    }
+  };
+
+  const formatInline = (text: string) => {
+    return text
+      .replace(/[—–]/g, " - ")
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+
+    if (line.startsWith("# ")) {
+      closeList();
+      htmlParts.push(`<h1 dir="rtl">${formatInline(line.slice(2))}</h1>`);
+    } else if (line.startsWith("## ")) {
+      closeList();
+      htmlParts.push(`<h2 dir="rtl">${formatInline(line.slice(3))}</h2>`);
+    } else if (line.startsWith("### ")) {
+      closeList();
+      htmlParts.push(`<h3 dir="rtl">${formatInline(line.slice(4))}</h3>`);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      if (inList !== "ul") {
+        closeList();
+        htmlParts.push('<ul dir="rtl">');
+        inList = "ul";
+      }
+      htmlParts.push(`<li>${formatInline(line.slice(2))}</li>`);
+    } else if (/^\d+\.\s/.test(line)) {
+      if (inList !== "ol") {
+        closeList();
+        htmlParts.push('<ol dir="rtl">');
+        inList = "ol";
+      }
+      htmlParts.push(`<li>${formatInline(line.replace(/^\d+\.\s/, ""))}</li>`);
+    } else if (line.startsWith("> ")) {
+      closeList();
+      htmlParts.push(`<blockquote dir="rtl">${formatInline(line.slice(2))}</blockquote>`);
+    } else {
+      closeList();
+      htmlParts.push(`<p dir="rtl">${formatInline(line)}</p>`);
+    }
+  }
+
+  closeList();
+  return htmlParts.join("\n");
 }
 
 // Turn provider errors into crystal-clear, reassuring Hebrew messages.
@@ -932,8 +1008,7 @@ ${cannibalizationDirective}
   "outline": [
     { "sectionTitle": "כותרת ביניים המנגנון", "description": "תמצית קצרה" }
   ],
-  "content": "גוף המאמר המלא לפי שלבי מ.ס.ע סביב '${cleanKeyword}' בפורמט Markdown...",
-  "bodyHtml": "אותו גוף מאמר כ-HTML עם dir=\\"rtl\\" בכל בלוק, בלי מקפים ארוכים, מוכן לסאניטי",
+  "content": "גוף המאמר המלא לפי שלבי מ.ס.ע סביב '${cleanKeyword}' בפורמט Markdown מלא (כותרות H2/H3, פסקאות ברורות, רשימות, ללא מקפים ארוכים)...",
   "faqs": [
     { "question": "שאלה 1 סביב '${cleanKeyword}'?", "answer": "תשובה ישירה" },
     { "question": "שאלה 2?", "answer": "תשובה" },
@@ -993,15 +1068,23 @@ ${cannibalizationDirective}
     const response = await generateWithFallback(client, {
       model: sanitizeModel(modelName),
       contents: prompt,
-      config: config
+      config: config,
+      timeoutMs: 48000,
+      totalBudgetMs: 55000
     });
 
     const resultText = response.text || "{}";
     const parsed = parseJSONResponse(resultText);
 
+    // Guaranteed RTL HTML populated directly from content if not explicitly generated
+    const bodyHtml = parsed.bodyHtml && parsed.bodyHtml.length > 50
+      ? parsed.bodyHtml
+      : convertMarkdownToRtlHtml(parsed.content || "");
+
     // Guaranteed canonical properties and cannibalization audit results attached
     const finalArticle = {
       ...parsed,
+      bodyHtml,
       keyword: cleanKeyword,
       cannibalizationGuard: {
         checked: true,
@@ -1082,7 +1165,6 @@ ${article.content}
     { "sectionTitle": "שם הפרק", "description": "תמצית קצרה" }
   ],
   "content": "התוכן המלא המעודכן בפורמט Markdown...",
-  "bodyHtml": "אותו תוכן מעודכן כ-HTML עם dir=\\"rtl\\" בכל בלוק, מוכן ל-Sanity, ללא מקפים ארוכים",
   "faqs": [
     { "question": "שאלה נפוצה", "answer": "תשובה קצרה ומדויקת" }
   ],
@@ -1100,11 +1182,16 @@ ${article.content}
     const response = await generateWithFallback(client, {
       model: sanitizeModel(modelName),
       contents: prompt,
-      config: config
+      config: config,
+      timeoutMs: 45000,
+      totalBudgetMs: 55000
     });
 
     const resultText = response.text || "{}";
     const data = parseJSONResponse(resultText);
+    if (!data.bodyHtml || data.bodyHtml.length < 50) {
+      data.bodyHtml = convertMarkdownToRtlHtml(data.content || "");
+    }
     res.json({ article: data });
   } catch (error: any) {
     console.error("Error in edit-article:", error);
@@ -1558,6 +1645,8 @@ ${content}
         systemInstruction: "You are the head of content and brand campaigns for HeartCompass. You turn in-depth psychological/parenting articles into cohesive, high-converting 360-degree campaigns in Yossi Medalsi's exact voice.",
         responseMimeType: "application/json",
       },
+      timeoutMs: 45000,
+      totalBudgetMs: 55000,
     });
 
     const parsed = parseJSONResponse(resp.text || "{}");
