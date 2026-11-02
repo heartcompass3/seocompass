@@ -477,6 +477,13 @@ ${list}
 
   const handleGenerate360Campaign = async () => {
     if (!generatedArticle) return;
+    if (campaignResult) {
+      const el = document.getElementById('campaign-360-block');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
     setCampaignLoading(true);
     setCampaignError('');
     try {
@@ -491,6 +498,13 @@ ${list}
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'יצירת קמפיין 360 נכשלה');
       setCampaignResult(data.campaign);
+
+      setTimeout(() => {
+        const el = document.getElementById('campaign-360-block');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 150);
     } catch (err: any) {
       console.error(err);
       setCampaignError(err.message || 'שגיאה ביצירת קמפיין 360');
@@ -796,6 +810,12 @@ ${list}
                     )}
                   </button>
 
+                  {campaignError && (
+                    <span className="text-[11px] text-rose-600 font-bold bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg animate-fade-in">
+                      שגיאה ב-360: {campaignError}
+                    </span>
+                  )}
+
                   {/* Push to Sanity CMS Draft button */}
                   <button
                     onClick={handlePushToSanity}
@@ -1001,7 +1021,7 @@ ${list}
 
               {/* 360° Campaign Generator Flywheel Block */}
               {campaignError && (
-                <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 animate-fade-in text-right">
+                <div id="campaign-360-error" className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 animate-fade-in text-right">
                   <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5 shrink-0" />
                   <div>
                     <h5 className="text-rose-800 text-xs font-bold">יצירת קמפיין 360 נכשלה</h5>
@@ -1011,7 +1031,7 @@ ${list}
               )}
 
               {campaignResult && (
-                <div className="bg-gradient-to-br from-amber-50/70 via-white to-orange-50/60 rounded-2xl border border-amber-300 p-5 shadow-xs space-y-4 text-right animate-fade-in">
+                <div id="campaign-360-block" className="bg-gradient-to-br from-amber-50/70 via-white to-orange-50/60 rounded-2xl border border-amber-300 p-5 shadow-xs space-y-4 text-right animate-fade-in">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-amber-200/70 pb-3 gap-3 flex-row-reverse">
                     <div className="flex items-center gap-2 flex-row-reverse justify-end">
                       <Zap className="w-5 h-5 text-amber-500 shrink-0" />
@@ -1022,12 +1042,12 @@ ${list}
                     </div>
                     {campaignResult.suggestedTool && (
                       <a
-                        href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug}`}
+                        href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug || campaignResult.suggestedTool.path}`}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 bg-amber-100/90 hover:bg-amber-200 text-amber-900 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-amber-300 transition-all self-start sm:self-auto flex-row-reverse"
                       >
-                        <span>כלי מותאם: {campaignResult.suggestedTool.name}</span>
+                        <span>כלי מותאם: {campaignResult.suggestedTool.name || campaignResult.suggestedTool.title}</span>
                         <ExternalLink className="w-3 h-3 text-amber-700 shrink-0" />
                       </a>
                     )}
@@ -1108,11 +1128,11 @@ ${list}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                           <div className="bg-purple-50/50 p-2.5 rounded-lg border border-purple-100 text-right">
                             <span className="text-[10px] font-bold text-purple-900 block mb-1">פתיחה מילולית:</span>
-                            <p className="font-semibold text-slate-800">{campaignResult.reelsScript.hook3s}</p>
+                            <p className="font-semibold text-slate-800">{campaignResult.reelsScript?.hook3s || campaignResult.reels?.hook || ''}</p>
                           </div>
                           <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-right">
                             <span className="text-[10px] font-bold text-slate-600 block mb-1">מה רואים על המסך:</span>
-                            <p className="text-slate-700">{campaignResult.reelsScript.visualHook}</p>
+                            <p className="text-slate-700">{campaignResult.reelsScript?.visualHook || 'צילום אותנטי בגובה העיניים'}</p>
                           </div>
                         </div>
                       </div>
@@ -1124,14 +1144,14 @@ ${list}
                           <span className="text-[10px] text-slate-400">אורך משוער: 45-60 שניות</span>
                         </div>
                         <div className="space-y-2">
-                          {campaignResult.reelsScript.beats?.map((beat, bIdx) => (
+                          {(campaignResult.reelsScript?.beats || campaignResult.reels?.beats || []).map((beat: any, bIdx: number) => (
                             <div key={bIdx} className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/80 text-xs space-y-1.5 transition-all text-right">
                               <div className="flex items-center justify-between gap-2 flex-row-reverse">
                                 <span className="font-mono text-[10px] font-bold bg-slate-200 text-slate-800 px-2 py-0.5 rounded">
                                   {beat.timecode}
                                 </span>
                                 <span className="text-[10px] font-bold text-purple-700">
-                                  טקסט על מסך: {beat.textOnScreen}
+                                  טקסט על מסך: {beat.textOnScreen || beat.onScreenText}
                                 </span>
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] pt-1">
@@ -1150,8 +1170,8 @@ ${list}
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                        <CopyField label="קריאה לפעולה בסרטון (CTA)" sanityField="cta" value={campaignResult.reelsScript.callToAction} />
-                        <CopyField label="סאונד ומוזיקה מומלצת" sanityField="audio" value={campaignResult.reelsScript.audioSuggestion} />
+                        <CopyField label="קריאה לפעולה בסרטון (CTA)" sanityField="cta" value={campaignResult.reelsScript?.callToAction || campaignResult.reels?.cta} />
+                        <CopyField label="סאונד ומוזיקה מומלצת" sanityField="audio" value={campaignResult.reelsScript?.audioSuggestion || campaignResult.reels?.audioIdea} />
                       </div>
                     </div>
                   )}
@@ -1159,11 +1179,11 @@ ${list}
                   {/* TAB 2: FACEBOOK POST */}
                   {campaignTab === 'facebook' && (
                     <div className="space-y-4 pt-1">
-                      {campaignResult.facebookPost.hookVariations && (
+                      {((campaignResult.facebookPost?.hookVariations || [])).length > 0 && (
                         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-right">
-                          <span className="text-xs font-bold text-slate-700 block">3 וריאציות הוק לבדיקת A/B:</span>
+                          <span className="text-xs font-bold text-slate-700 block">וריאציות הוק לבדיקת A/B:</span>
                           <div className="space-y-1.5">
-                            {campaignResult.facebookPost.hookVariations.map((hook, hIdx) => (
+                            {(campaignResult.facebookPost?.hookVariations || []).map((hook: string, hIdx: number) => (
                               <div key={hIdx} className="bg-blue-50/50 border border-blue-100 p-2.5 rounded-lg text-xs font-semibold text-blue-950 flex items-center gap-2 flex-row-reverse justify-end">
                                 <span>{hook}</span>
                                 <span className="text-[10px] font-mono bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold shrink-0">#{hIdx + 1}</span>
@@ -1173,27 +1193,27 @@ ${list}
                         </div>
                       )}
 
-                      <CopyField label="פוסט מלא לפייסבוק (סטורי-טלינג בגובה העיניים)" sanityField="facebookPost" value={campaignResult.facebookPost.body} multiline />
-                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.facebookPost.cta} />
+                      <CopyField label="פוסט מלא לפייסבוק (סטורי-טלינג בגובה העיניים)" sanityField="facebookPost" value={campaignResult.facebookPost?.body} multiline />
+                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.facebookPost?.cta} />
                     </div>
                   )}
 
                   {/* TAB 3: INSTAGRAM CAROUSEL */}
                   {campaignTab === 'instagram' && (
                     <div className="space-y-4 pt-1">
-                      <CopyField label="טקסט לפוסט (Caption)" sanityField="caption" value={campaignResult.instagramCarousel.caption} multiline />
+                      <CopyField label="טקסט לפוסט (Caption)" sanityField="caption" value={campaignResult.instagramCarousel?.caption} multiline />
                       
                       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-right">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-row-reverse">
-                          <span className="text-xs font-bold text-slate-700">שקופיות הקרוסלה ({campaignResult.instagramCarousel.slides?.length || 0})</span>
+                          <span className="text-xs font-bold text-slate-700">שקופיות הקרוסלה ({(campaignResult.instagramCarousel?.slides || []).length})</span>
                           <span className="text-[10px] text-pink-600 font-bold">פורמט 1:1 או 4:5 ל-Canva</span>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {campaignResult.instagramCarousel.slides?.map((slide) => (
-                            <div key={slide.slideNumber} className="p-3 bg-gradient-to-br from-pink-50/40 via-white to-purple-50/40 rounded-xl border border-pink-200/70 text-xs space-y-2 text-right">
+                          {(campaignResult.instagramCarousel?.slides || []).map((slide: any, sIdx: number) => (
+                            <div key={slide.slideNumber || sIdx} className="p-3 bg-gradient-to-br from-pink-50/40 via-white to-purple-50/40 rounded-xl border border-pink-200/70 text-xs space-y-2 text-right">
                               <div className="flex items-center justify-between flex-row-reverse">
-                                <span className="font-bold text-pink-900">שקופית #{slide.slideNumber}</span>
+                                <span className="font-bold text-pink-900">שקופית #{slide.slideNumber || sIdx + 1}</span>
                                 <span className="text-[9px] font-mono bg-pink-100 text-pink-800 px-1.5 py-0.5 rounded">Slide</span>
                               </div>
                               <h5 className="font-bold text-slate-900 text-xs">{slide.headline}</h5>
@@ -1214,11 +1234,11 @@ ${list}
                   {/* TAB 4: NEWSLETTER */}
                   {campaignTab === 'newsletter' && (
                     <div className="space-y-4 pt-1">
-                      {campaignResult.newsletter.subjectLineOptions && (
+                      {((campaignResult.newsletter?.subjectLineOptions || campaignResult.newsletter?.subjectLines || [])).length > 0 && (
                         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-right">
                           <span className="text-xs font-bold text-slate-700 block">שורות נושא לבדיקת פתיחה (Subject Lines):</span>
                           <div className="space-y-1.5">
-                            {campaignResult.newsletter.subjectLineOptions.map((subj, sIdx) => (
+                            {(campaignResult.newsletter?.subjectLineOptions || campaignResult.newsletter?.subjectLines || []).map((subj: string, sIdx: number) => (
                               <div key={sIdx} className="bg-emerald-50/50 border border-emerald-100 p-2.5 rounded-lg text-xs font-semibold text-emerald-950 flex items-center gap-2 flex-row-reverse justify-end">
                                 <span>{subj}</span>
                                 <span className="text-[10px] font-mono bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded font-bold shrink-0">#{sIdx + 1}</span>
@@ -1228,10 +1248,10 @@ ${list}
                         </div>
                       )}
 
-                      <CopyField label="טקסט תצוגה מקדימה (Preview Text)" sanityField="previewText" value={campaignResult.newsletter.previewText} />
-                      <CopyField label="תמונת קליניקה / פתיחה אישית" sanityField="openingStory" value={campaignResult.newsletter.openingStory} multiline />
-                      <CopyField label="גוף הניוזלטר המלא" sanityField="body" value={campaignResult.newsletter.body} multiline />
-                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.newsletter.callToAction} />
+                      <CopyField label="טקסט תצוגה מקדימה (Preview Text)" sanityField="previewText" value={campaignResult.newsletter?.previewText} />
+                      <CopyField label="תמונת קליניקה / פתיחה אישית" sanityField="openingStory" value={campaignResult.newsletter?.openingStory || campaignResult.newsletter?.openingScene} multiline />
+                      <CopyField label="גוף הניוזלטר המלא" sanityField="body" value={campaignResult.newsletter?.body} multiline />
+                      <CopyField label="קריאה לפעולה (CTA)" sanityField="cta" value={campaignResult.newsletter?.callToAction} />
                     </div>
                   )}
 
@@ -1241,10 +1261,10 @@ ${list}
                       <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-row-reverse">
                         <div>
                           <span className="text-[10px] text-amber-600 font-bold block">כלי המרה שקטה באתר</span>
-                          <h4 className="font-display font-bold text-slate-900 text-base">{campaignResult.suggestedTool.name}</h4>
+                          <h4 className="font-display font-bold text-slate-900 text-base">{campaignResult.suggestedTool.name || campaignResult.suggestedTool.title}</h4>
                         </div>
                         <a
-                          href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug}`}
+                          href={`https://www.heartcompass.co.il${campaignResult.suggestedTool.slug || campaignResult.suggestedTool.path}`}
                           target="_blank"
                           rel="noreferrer"
                           className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-xs flex-row-reverse"
@@ -1257,17 +1277,17 @@ ${list}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1 text-right">
                           <span className="text-[10px] text-slate-400 font-bold block">תיאור הכלי</span>
-                          <p className="text-slate-800">{campaignResult.suggestedTool.description}</p>
+                          <p className="text-slate-800">{campaignResult.suggestedTool.description || campaignResult.suggestedTool.reason}</p>
                         </div>
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1 text-right">
                           <span className="text-[10px] text-slate-400 font-bold block">כתובת ה-URL באתר</span>
-                          <code className="text-blue-600 font-mono text-[11px] block" dir="ltr">https://www.heartcompass.co.il{campaignResult.suggestedTool.slug}</code>
+                          <code className="text-blue-600 font-mono text-[11px] block" dir="ltr">https://www.heartcompass.co.il{campaignResult.suggestedTool.slug || campaignResult.suggestedTool.path}</code>
                         </div>
                       </div>
 
                       <div className="bg-amber-50/70 border border-amber-200 p-3.5 rounded-xl text-xs space-y-1.5 text-right">
                         <span className="font-bold text-amber-900 block">מדוע דווקא כלי זה מתאים למאמר?</span>
-                        <p className="text-amber-800 leading-relaxed">{campaignResult.suggestedTool.placementReason}</p>
+                        <p className="text-amber-800 leading-relaxed">{campaignResult.suggestedTool.placementReason || campaignResult.suggestedTool.reason}</p>
                       </div>
                     </div>
                   )}

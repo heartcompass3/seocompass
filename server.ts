@@ -1638,8 +1638,10 @@ ${content}
   }
 }`;
 
+    const targetModel = req.body.selectedModel || process.env.ARTICLE_MODEL || "gemini-2.5-flash";
+
     const resp = await generateWithFallback(client, {
-      model: sanitizeModel(process.env.ARTICLE_MODEL || "gemini-2.5-flash"),
+      model: sanitizeModel(targetModel),
       contents: prompt,
       config: {
         systemInstruction: "You are the head of content and brand campaigns for HeartCompass. You turn in-depth psychological/parenting articles into cohesive, high-converting 360-degree campaigns in Yossi Medalsi's exact voice.",
@@ -1650,7 +1652,66 @@ ${content}
     });
 
     const parsed = parseJSONResponse(resp.text || "{}");
-    res.json({ campaign: parsed });
+
+    // Defensively normalize the campaign structure so all UI expectations are met
+    const fbPost = (parsed.socialPosts || []).find((p: any) => p.platform === "facebook") || parsed.socialPosts?.[0];
+    const igPost = (parsed.socialPosts || []).find((p: any) => p.platform === "instagram") || parsed.socialPosts?.[1];
+
+    const normalizedCampaign = {
+      articleId: parsed.articleId || article.id || "art_1",
+      articleTitle: parsed.articleTitle || articleTitle,
+      articleSlug: parsed.articleSlug || articleSlug,
+      suggestedTool: {
+        name: parsed.suggestedTool?.name || parsed.suggestedTool?.title || bestTool.title,
+        title: parsed.suggestedTool?.title || parsed.suggestedTool?.name || bestTool.title,
+        slug: parsed.suggestedTool?.slug || parsed.suggestedTool?.path || bestTool.path,
+        path: parsed.suggestedTool?.path || parsed.suggestedTool?.slug || bestTool.path,
+        description: parsed.suggestedTool?.description || parsed.suggestedTool?.reason || bestTool.title,
+        reason: parsed.suggestedTool?.reason || parsed.suggestedTool?.placementReason || "",
+        placementReason: parsed.suggestedTool?.placementReason || parsed.suggestedTool?.reason || "",
+      },
+      newsletter: {
+        subjectLines: parsed.newsletter?.subjectLines || parsed.newsletter?.subjectLineOptions || [],
+        subjectLineOptions: parsed.newsletter?.subjectLineOptions || parsed.newsletter?.subjectLines || [],
+        previewText: parsed.newsletter?.previewText || "",
+        openingStory: parsed.newsletter?.openingStory || parsed.newsletter?.openingScene || "",
+        openingScene: parsed.newsletter?.openingScene || parsed.newsletter?.openingStory || "",
+        body: parsed.newsletter?.body || "",
+        callToAction: parsed.newsletter?.callToAction || "",
+      },
+      facebookPost: parsed.facebookPost || {
+        hookVariations: fbPost?.hookVariations || [],
+        body: fbPost?.caption || fbPost?.body || "",
+        cta: fbPost?.cta || "",
+      },
+      instagramCarousel: parsed.instagramCarousel || {
+        caption: igPost?.caption || "",
+        slides: (parsed.carousel || []).map((s: any, idx: number) => ({
+          slideNumber: s.slideNumber || idx + 1,
+          headline: s.headline || s.slideTitle || `שקופית ${idx + 1}`,
+          body: s.body || s.slideText || "",
+          visualDescription: s.visualDescription || "",
+        })),
+      },
+      reelsScript: parsed.reelsScript || {
+        hook3s: parsed.reels?.hook || "",
+        visualHook: parsed.reels?.beats?.[0]?.visual || "צילום טבעי בגובה העיניים",
+        beats: (parsed.reels?.beats || []).map((b: any) => ({
+          timecode: b.timecode || "",
+          textOnScreen: b.textOnScreen || b.onScreenText || "",
+          onScreenText: b.onScreenText || b.textOnScreen || "",
+          voiceover: b.voiceover || "",
+          visual: b.visual || "",
+        })),
+        callToAction: parsed.reels?.cta || "",
+        audioSuggestion: parsed.reels?.audioIdea || "",
+      },
+      socialPosts: parsed.socialPosts || [],
+      carousel: parsed.carousel || [],
+      reels: parsed.reels || {},
+    };
+
+    res.json({ campaign: normalizedCampaign });
   } catch (err: any) {
     console.error("Error in generate-360 campaign:", err);
     res.status(500).json({ error: friendlyError(err) });

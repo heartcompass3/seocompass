@@ -278,26 +278,65 @@ export interface CannibalizationCheckResult {
 }
 
 export interface CampaignNewsletter {
-  subjectLines: string[];
-  previewText: string;
-  openingScene: string;
-  body: string;
-  callToAction: string;
+  subjectLines?: string[];
+  subjectLineOptions?: string[];
+  previewText?: string;
+  openingScene?: string;
+  openingStory?: string;
+  body?: string;
+  callToAction?: string;
 }
 
 export interface SuggestedToolMatch {
-  title: string;
-  path: string;
-  reason: string;
+  title?: string;
+  name?: string;
+  path?: string;
+  slug?: string;
+  reason?: string;
+  placementReason?: string;
+  description?: string;
+}
+
+export interface CampaignFacebookPost {
+  hookVariations?: string[];
+  body?: string;
+  cta?: string;
+}
+
+export interface CampaignInstagramCarousel {
+  caption?: string;
+  slides?: Array<{
+    slideNumber?: number;
+    headline?: string;
+    body?: string;
+    visualDescription?: string;
+  }>;
+}
+
+export interface CampaignReelsScript {
+  hook3s?: string;
+  visualHook?: string;
+  beats?: Array<{
+    timecode?: string;
+    textOnScreen?: string;
+    onScreenText?: string;
+    visual?: string;
+    voiceover?: string;
+  }>;
+  callToAction?: string;
+  audioSuggestion?: string;
 }
 
 export interface Campaign360 {
-  articleId: string;
-  articleTitle: string;
-  articleSlug: string;
-  suggestedTool: SuggestedToolMatch;
-  newsletter: CampaignNewsletter;
-  socialPosts: SocialPost[];
-  carousel: CarouselSlide[];
-  reels: ReelsScript;
+  articleId?: string;
+  articleTitle?: string;
+  articleSlug?: string;
+  suggestedTool?: SuggestedToolMatch;
+  newsletter?: CampaignNewsletter;
+  socialPosts?: SocialPost[];
+  carousel?: CarouselSlide[];
+  reels?: ReelsScript;
+  reelsScript?: CampaignReelsScript;
+  facebookPost?: CampaignFacebookPost;
+  instagramCarousel?: CampaignInstagramCarousel;
 }
